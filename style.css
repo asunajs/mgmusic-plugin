@@ -1,6 +1,13 @@
 /* 咪咕音乐插件页：账号 / 运行 / 设置。
    颜色、按钮、输入框尽量走面板 token 和组件类；这里只补布局。 */
 
+:root {
+  /* 面板主题 token 的别名。不要在插件里重定义 --bg / --accent。 */
+  --dim: var(--text-dim, #bac2de);
+  --soft: var(--surface-2, #45475a);
+  --danger: var(--error, #f87171);
+}
+
 .page {
   max-width: 920px;
   margin: 0 auto;
@@ -150,7 +157,7 @@
   padding: var(--sp-3, 12px);
   border: 1px solid var(--border-soft, #313244);
   border-radius: var(--r-md, 8px);
-  background: var(--soft, rgba(255, 255, 255, 0.025));
+  background: var(--surface, rgba(255, 255, 255, 0.025));
 }
 
 .account-main {
@@ -213,7 +220,7 @@
 }
 
 .danger-text {
-  color: var(--danger, #f38ba8);
+  color: var(--danger, var(--error, #f87171));
 }
 
 /* 设置 */
@@ -277,7 +284,7 @@
   align-items: center;
   justify-content: center;
   padding: var(--sp-4, 16px);
-  background: rgba(0, 0, 0, 0.55);
+  background: var(--scrim, rgba(0, 0, 0, 0.55));
 }
 
 .dialog-back[hidden] {
@@ -290,10 +297,10 @@
   display: flex;
   flex-direction: column;
   overflow: hidden;
-  background: var(--bg, #1e1e2e);
+  background: var(--surface, var(--bg, #1e1e2e));
   border: 1px solid var(--border-soft, #313244);
   border-radius: var(--r-lg, 12px);
-  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.35);
+  box-shadow: var(--shadow, 0 20px 60px rgba(0, 0, 0, 0.35));
 }
 
 .dialog-head {
@@ -316,7 +323,7 @@
 }
 
 .err-text {
-  color: var(--danger, #f38ba8);
+  color: var(--danger, var(--error, #f87171));
 }
 
 /* 手机窄屏 */
@@ -342,4 +349,10 @@
   .top {
     align-items: center;
   }
+}
+
+/* 原生控件的强调色也跟随面板主题（复选框在浅色主题下默认是系统蓝）。 */
+input[type="checkbox"],
+input[type="radio"] {
+  accent-color: var(--accent, #89b4fa);
 }
