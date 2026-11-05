@@ -28,7 +28,7 @@ import {
 } from 'host-api';
 import fs from 'node:fs';
 
-const VERSION = '0.1.4';
+const VERSION = '0.1.5';
 const PLUGIN = 'mgmusic-plugin';
 const API = '/plugins/mgmusic-plugin/api';
 
@@ -635,6 +635,9 @@ function fetchH5Cookies(cookie, token) {
 }
 
 function saveLoginDevice(msisdn, uid, deviceid, ce, cookie) {
+    if (!uid || String(uid) === '0') {
+        throw new Error('拒绝保存 uid=0：服务端会把它当游客/其他账号，不能用于领豆');
+    }
     const cfg = loadConfig();
     let idx = -1;
     for (let i = 0; i < cfg.devices.length; i += 1) {
@@ -719,11 +722,16 @@ function loginWithCode(msisdn, code) {
         throw new Error('登录失败: ' + (d.message || ('status=' + d.status)));
     }
 
-    // 金币中心 H5 实测只按 ce 里的 msisdn + deviceid 记账；passport uid 不参与。
-    // 短信校验只用来确认手机号归属，登录成功后用 uid=0 自铸 H5 ce。
+    // 不能再用 uid=0：H5 会把 uid=0 当游客/其他账号（实测 userId=0、余额不是本人）。
+    // 只有拿到真实 uid 才保存设备；拿不到就保持不写入，避免错账号领豆。
+    const uid = findUid(result);
+    if (!uid || String(uid) === '0') {
+        throw new Error('登录成功，但没解析到真实 uid；为避免写错账号，本次不保存设备。'
+            + '需要补 SSO/userinfo 的 uid 解析后再登录。');
+    }
     const deviceid = uuidV4();
-    const ce = makeCe('0', phone, deviceid);
-    const cfg = saveLoginDevice(phone, '0', deviceid, ce, '');
+    const ce = makeCe(uid, phone, deviceid);
+    const cfg = saveLoginDevice(phone, uid, deviceid, ce, '');
     let dev = null;
     for (let i = 0; i < cfg.devices.length; i += 1) {
         if (String(cfg.devices[i].msisdn || '') === phone) {

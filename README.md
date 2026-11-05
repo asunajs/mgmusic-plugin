@@ -26,7 +26,7 @@
 也可以手动下载 [`mgmusic-plugin-0.1.1.zip`](https://github.com/asunajs/mgmusic-plugin/releases/download/v0.1.1/mgmusic-plugin-0.1.1.zip)
 后在「插件管理 → 上传」里安装。
 
-> 本地开发版是 **0.1.4**（短信登录/H5 凭证，未发布到商城；商城 Release 仍是 0.1.1）。
+> 本地开发版是 **0.1.5**（短信登录/H5 凭证，未发布到商城；商城 Release 仍是 0.1.1）。
 
 ## 安装
 
@@ -136,8 +136,9 @@ cp config.example.json "$PLUGIN_DATA_DIR/mgmusic-plugin/config.json"
 
 1. 填 11 位手机号，点「发送验证码」；
 2. 收到 6 位码后填入，点「登录并保存」；
-3. 插件自动请求 passport 公钥、RSA 加密手机号/验证码、校验登录，然后生成
-   `uid=0` / `msisdn` / `deviceid` / `ce` 写进 `devices`。
+3. 插件自动请求 passport 公钥、RSA 加密手机号/验证码、校验登录；
+   **必须拿到真实 uid** 才生成 `uid` / `msisdn` / `deviceid` / `ce` 写进 `devices`。
+   拿不到 uid 时只报错、不保存设备，避免写错账号。
 
 这条走的是 **passport 网页版短信登录**（`/password/publickey` +
 `/login/dynamicpassword` + `/authn/dynamicpassword`），不是 App 的 DUP SDK；
@@ -145,8 +146,9 @@ cp config.example.json "$PLUGIN_DATA_DIR/mgmusic-plugin/config.json"
 
 说明：
 
-- 金币中心 H5 实测按 `ce` 里的 `msisdn + deviceid` 记账，passport uid 不参与；
-  所以登录成功后用 `uid=0` 自铸 ce，不再依赖 SSO 的 `/portal/sso/authn` 用户信息。
+- ⚠️ 不要用 `uid=0`：2026-11-05 实测 H5 会把 `uid=0` 当游客/其他账号
+  （`userId=0`，返回的 msisdn/余额都不是本人），会写错账号。
+- 金币中心 H5 的 `ce` 必须用真实 uid；`uid` 仍要从 passport SSO/userinfo 补。
 - 登录成功后会自动用新凭证做一次 H5 查询；能查到音符/任务就说明凭证可用。
 - 短信验证码只用于确认手机号归属；手机号、uid、ce 都属于敏感信息，只写插件数据目录，不要贴到聊天/仓库。
 - QuickJS 内已验证 passport 公钥请求 + RSA 加密（1024-bit，输出 256 字符 hex，和网页 JS 的 RSAKey.encrypt 一致）；H5 查询用抓包 ce 变体验证过。
