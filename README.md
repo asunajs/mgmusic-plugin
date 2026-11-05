@@ -149,7 +149,7 @@ cp config.example.json "$PLUGIN_DATA_DIR/mgmusic-plugin/config.json"
 - 如果提示「登录成功但没解析到 uid」，说明 passport 返回了 token，但用户信息接口还没对上；
   把脱敏后的返回结构留下，后续补接口，不要反复发码。
 - 手机号、cookie、uid 都属于敏感信息，只写插件数据目录；不要贴到聊天/仓库。
-- 首次真实登录还没跑过；QuickJS 内已验证 passport 公钥请求 + RSA 加密（1024-bit，输出 172 字符 Base64），短信/登录接口用测试账号再验一次。
+- 首次真实登录还没跑过；QuickJS 内已验证 passport 公钥请求 + RSA 加密（1024-bit，输出 256 字符 hex，和网页 JS 的 RSAKey.encrypt 一致），短信/登录接口用测试账号再验一次。
 
 ## 任务
 

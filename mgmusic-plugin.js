@@ -367,7 +367,7 @@ function modPow(base, exp, mod) {
     return r;
 }
 
-/** RSA PKCS#1 v1.5 公钥加密；passport 网页登录用它加密手机号和验证码。 */
+/** RSA PKCS#1 v1.5 公钥加密；passport 网页 JS 的 RSAKey.encrypt 返回 hex，不是 Base64。 */
 function rsaEncrypt(text, modulusHex, exponentHex) {
     let hex = String(modulusHex || '').replace(/^0x/i, '').replace(/\s+/g, '');
     if (hex.length % 2 === 1) hex = '0' + hex;
@@ -400,7 +400,11 @@ function rsaEncrypt(text, modulusHex, exponentHex) {
         out[i] = Number(c & 255n);
         c >>= 8n;
     }
-    return base64Bytes(out);
+    let hexOut = '';
+    for (let i = 0; i < out.length; i += 1) {
+        hexOut += HEX[(out[i] >> 4) & 15] + HEX[out[i] & 15];
+    }
+    return hexOut;
 }
 
 function loginHeaders(extra) {
