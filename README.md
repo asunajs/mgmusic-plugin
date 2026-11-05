@@ -15,6 +15,16 @@
 | `config.example.json` | 配置模板（安装到插件数据目录，首次安装时复制） |
 | `install.sh` | 一键安装到本机面板 |
 
+## 面板商城
+
+已收录到 `rust-plugin-panel` 的插件商城：打开「插件列表 → 插件商城」，找到
+「咪咕音乐金币中心」点安装即可。条目 id 是 `mgmusic-plugin`，仓库是
+[`asunajs/mgmusic-plugin`](https://github.com/asunajs/mgmusic-plugin)，Release 里挂的是
+面板能直接解压的 zip。
+
+也可以手动下载 [`mgmusic-plugin-0.1.0.zip`](https://github.com/asunajs/mgmusic-plugin/releases/download/v0.1.0/mgmusic-plugin-0.1.0.zip)
+后在「插件管理 → 上传」里安装。
+
 ## 安装
 
 面板默认目录（macOS 安装版）：
