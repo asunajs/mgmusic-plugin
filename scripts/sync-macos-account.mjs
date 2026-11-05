@@ -6,7 +6,7 @@
 //   node scripts/sync-macos-account.mjs /path/to/app-account.json
 //
 // 只写 uid / msisdn（以及已有文件里的 deviceid），不写 passId/token。
-// 生成后 mgmusic-plugin 会在 status/run 时自动导入，不需要再手动填凭据。
+// 生成后 mgmusic 会在 status/run 时自动导入，不需要再手动填凭据。
 
 import fs from 'node:fs';
 import os from 'node:os';
@@ -18,7 +18,7 @@ const PREF = path.join(
 );
 const DEFAULT_OUT = path.join(
   os.homedir(),
-  'Library/Application Support/plugin-panel/data/plugin-data/mgmusic-plugin/app-account.json',
+  'Library/Application Support/plugin-panel/data/plugin-data/mgmusic/app-account.json',
 );
 const out = process.argv[2] || DEFAULT_OUT;
 

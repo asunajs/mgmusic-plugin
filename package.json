@@ -1,11 +1,11 @@
 {
   "name": "mgmusic-plugin",
-  "version": "0.2.2",
+  "version": "0.3.0",
   "private": true,
   "type": "module",
   "description": "咪咕音乐金币中心 JS 插件（QuickJS / Node）",
   "scripts": {
-    "check": "node --check mgmusic-plugin.js && node --check app.js",
+    "check": "node --check mgmusic.js && node --check app.js",
     "pack": "bash scripts/pack.sh"
   }
 }

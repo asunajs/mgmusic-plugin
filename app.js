@@ -2,7 +2,7 @@
 
 // 咪咕音乐插件页：账号 / 运行 / 设置三块。
 // 账号走短信登录，不再让用户直接编辑 devices/uid/ce 的原始 JSON。
-const API = '/plugins/mgmusic-plugin/api';
+const API = '/plugins/mgmusic/api';
 const $ = (id) => document.getElementById(id);
 
 const S = {

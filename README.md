@@ -1,6 +1,6 @@
 # mgmusic-plugin —— 咪咕音乐金币中心（QuickJS / Node 插件）
 
-`mgmusic-plugin` 是插件面板的 JS 插件，提供以下能力：
+`mgmusic-plugin` 是 GitHub 项目/发布包名；面板里注册的插件 id 是 **`mgmusic`**。插件提供以下能力：
 
 - **daily 定时任务**：每天 00:05 / 12:05 / 22:05 执行 login-access、qsq、zyd-sign、窗口打卡、听歌补报、领奖
 - **report 手动任务**：补报一次 `song-duration` 并领取已达档位
@@ -57,8 +57,8 @@ uid / deviceid / ce 由短信登录或 App 同步自动维护，不需要用户�
 
 | 文件 | 作用 |
 |---|---|
-| `mgmusic-plugin.js` | 插件后端（QuickJS / ESM，安装到 `plugins/js/`） |
-| `index.html` / `app.js` / `style.css` / `boot.js` | 插件配置页（安装到 `plugins/mgmusic-plugin/`） |
+| `mgmusic.js` | 插件后端（QuickJS / ESM，安装到 `plugins/js/mgmusic.js`） |
+| `index.html` / `app.js` / `style.css` / `boot.js` | 插件配置页（安装到 `plugins/mgmusic/`） |
 | `config.example.json` | 配置模板（安装到插件数据目录，首次安装时复制） |
 | `scripts/sync-macos-account.mjs` | 从已登录的 macOS 咪咕 App 同步真实 uid/msisdn 到插件数据根 |
 | `install.sh` | 一键安装到本机面板 |
@@ -73,7 +73,7 @@ uid / deviceid / ce 由短信登录或 App 同步自动维护，不需要用户�
 也可以手动下载 [`mgmusic-plugin-0.1.1.zip`](https://github.com/asunajs/mgmusic-plugin/releases/download/v0.1.1/mgmusic-plugin-0.1.1.zip)
 后在「插件管理 → 上传」里安装。
 
-> 本地开发版是 **0.2.2**（短信登录按手机号解析 uid + macOS App 同步 + 身份硬校验，未发布到商城；商城 Release 仍是 0.1.1）。
+> 本地开发版是 **0.3.0**（短信登录按手机号解析 uid + macOS App 同步 + 身份硬校验，未发布到商城；商城 Release 仍是 0.1.1）。
 
 ## 安装
 
@@ -94,27 +94,33 @@ PLUGIN_DATA_DIR  = ~/Library/Application Support/plugin-panel/data/plugin-data
 
 ```bash
 # 1) 后端
-cp mgmusic-plugin.js  "$PLUGINS_DIR/js/"
+cp mgmusic.js  "$PLUGINS_DIR/js/"
 # 2) 配置页
-mkdir -p "$PLUGINS_DIR/mgmusic-plugin"
-cp index.html app.js style.css boot.js "$PLUGINS_DIR/mgmusic-plugin/"
+mkdir -p "$PLUGINS_DIR/mgmusic"
+cp index.html app.js style.css boot.js "$PLUGINS_DIR/mgmusic/"
 # 3) 配置（首次）
-mkdir -p "$PLUGIN_DATA_DIR/mgmusic-plugin"
-cp config.example.json "$PLUGIN_DATA_DIR/mgmusic-plugin/config.json"
+mkdir -p "$PLUGIN_DATA_DIR/mgmusic"
+cp config.example.json "$PLUGIN_DATA_DIR/mgmusic/config.json"
 ```
 
 面板会在 30 秒内（通常更快）扫描到新插件；也可以在「插件列表」里点重载。
 打开侧边栏「咪咕音乐」即可进入配置页。
 
-> 只上传后端 `mgmusic-plugin.js`（单文件安装）也能跑定时任务；此时侧边栏入口会 404，
+> 只上传后端 `mgmusic.js`（单文件安装）也能跑定时任务；此时侧边栏入口会 404，
 > 配置请用面板「插件列表 → 配置」的通用编辑器。要配置页就一起装 UI 目录。
 
 ### 从旧名迁移
 
-旧版叫 `cmusic-plugin`。`install.sh` 会在新配置不存在时，把
-`<PLUGIN_DATA_DIR>/cmusic-plugin/config.json` 复制到
-`<PLUGIN_DATA_DIR>/mgmusic-plugin/config.json`，旧目录不删。装完新插件后，
-到面板「插件列表」里把旧的 `cmusic-plugin` 删掉即可。
+旧版叫 `cmusic-plugin`，上一版面板 id 叫 `mgmusic-plugin`。现在面板 id 统一为
+`mgmusic`，`install.sh` 会自动：
+
+- 把旧后端 `mgmusic-plugin.js` 停用为 `.bak-rename`；
+- 把旧 UI 目录 `plugins/mgmusic-plugin/` 停用为 `.bak-rename`；
+- 把数据目录 `plugin-data/mgmusic-plugin/` 迁到 `plugin-data/mgmusic/`；
+- 更早的 `cmusic-plugin/config.json` 也会兼容迁移。
+
+仓库名、GitHub Release 资产名仍可以是 `mgmusic-plugin-*`；那是项目和发布包的名字，
+不是面板里的插件 id。
 
 ## 自动获取真实 uid（短信登录，默认）
 
@@ -135,11 +141,11 @@ cp config.example.json "$PLUGIN_DATA_DIR/mgmusic-plugin/config.json"
 node scripts/sync-macos-account.mjs
 ```
 
-生成 `<PLUGIN_DATA_DIR>/mgmusic-plugin/app-account.json`（只写 uid/msisdn/deviceid，不写 passId/token），插件会自动导入。App 账号变化后重新运行一次即可；cron 可定时刷新，launchd 默认没有 App 容器读取权限，若用 launchd 需给 node 完全磁盘访问。
+生成 `<PLUGIN_DATA_DIR>/mgmusic/app-account.json`（只写 uid/msisdn/deviceid，不写 passId/token），插件会自动导入。App 账号变化后重新运行一次即可；cron 可定时刷新，launchd 默认没有 App 容器读取权限，若用 launchd 需给 node 完全磁盘访问。
 
 ## 配置
 
-`<PLUGIN_DATA_DIR>/mgmusic-plugin/config.json`：
+`<PLUGIN_DATA_DIR>/mgmusic/config.json`：
 
 ```json
 {
@@ -297,4 +303,4 @@ POST https://app.pd.nf.migu.cn/user/api/comment/add/v2.0
 - 咪咕接口对 `Accept-Encoding` 敏感：插件统一发 `identity`；如果上游仍回 gzip，会明确报错而不是静默乱码。
 - 配置里有 `ce` / `msisdn` / `cookie`，属于敏感信息；它放在插件数据目录（不会被 `/plugins/` 静态服务），不要提交到 git。
 - 该插件只用 ECMAScript + `host-api` + `node:fs`（QuickJS 内置）；不要引入 `fetch` / `URL` / `TextEncoder` / `crypto`，QuickJS 没有。
-- 面板版本要求：`host-api` 带 `register_route` / `register_nav` 的版本（本仓库 0.2.2 实测）。
+- 面板版本要求：`host-api` 带 `register_route` / `register_nav` 的版本（本仓库 0.3.0 实测）。

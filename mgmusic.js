@@ -1,7 +1,7 @@
-// plugins/js/mgmusic-plugin.js —— 咪咕音乐金币中心（QuickJS 插件）
+// plugins/js/mgmusic.js —— 咪咕音乐金币中心（QuickJS 插件）
 //
 // 只依赖 ECMAScript + host-api。
-// 配置在 <PLUGIN_DATA_DIR>/mgmusic-plugin/config.json（config() 读取）。
+// 配置在 <PLUGIN_DATA_DIR>/mgmusic/config.json（config() 读取）。
 //
 // 任务：
 //   daily  —— 00:05 / 12:05 / 22:05：login-access + qsq + zyd-sign + 窗口打卡
@@ -29,9 +29,9 @@ import {
 } from 'host-api';
 import fs from 'node:fs';
 
-const VERSION = '0.2.2';
-const PLUGIN = 'mgmusic-plugin';
-const API = '/plugins/mgmusic-plugin/api';
+const VERSION = '0.3.0';
+const PLUGIN = 'mgmusic';
+const API = '/plugins/mgmusic/api';
 
 const BASE = 'https://app.c.nf.migu.cn';
 const COMMENT_BASE = 'https://app.pd.nf.migu.cn';
@@ -1457,7 +1457,7 @@ function updateJobSummary(text) {
     try {
         set_job_summary('daily', text);
     } catch (e) {
-        warn('[mgmusic-plugin] 更新任务摘要失败: ' + (e && e.message ? e.message : e));
+        warn('[mgmusic] 更新任务摘要失败: ' + (e && e.message ? e.message : e));
     }
 }
 
@@ -1469,22 +1469,22 @@ function runDaily() {
         if (imported) {
             cfg = loadConfig();
             if (imported.changed) {
-                info('[mgmusic-plugin] 已从 macOS App 同步账号 uid='
+                info('[mgmusic] 已从 macOS App 同步账号 uid='
                     + mask(imported.account.uid, 6, 4) + '（msisdn='
                     + mask(imported.account.msisdn, 3, 4) + '）');
             }
         }
     } catch (e) {
-        warn('[mgmusic-plugin] macOS App 账号同步失败：' + (e && e.message ? e.message : e));
+        warn('[mgmusic] macOS App 账号同步失败：' + (e && e.message ? e.message : e));
     }
     if (!cfg.devices.length) {
-        const line = '[mgmusic-plugin] 未配置 devices，跳过';
+        const line = '[mgmusic] 未配置 devices，跳过';
         warn(line);
         updateJobSummary('未配置账号');
         return { ok: true, skipped: true, lines: [line] };
     }
 
-    const lines = ['[mgmusic-plugin] daily 开始：' + cfg.devices.length + ' 个账号'];
+    const lines = ['[mgmusic] daily 开始：' + cfg.devices.length + ' 个账号'];
     let failedDevices = 0;
     let claimed = 0;
     let before = -1;
@@ -1511,7 +1511,7 @@ function runDaily() {
     }
 
     const duration = Date.now() - started;
-    const summary = '[mgmusic-plugin] daily 完成：' + cfg.devices.length
+    const summary = '[mgmusic] daily 完成：' + cfg.devices.length
         + ' 个账号，失败 ' + failedDevices
         + '，领取 +' + claimed
         + '，耗时 ' + duration + 'ms';
@@ -1594,7 +1594,7 @@ function commentAll() {
             lines.push('[' + label + '] 评论 FAIL ' + (e && e.message ? e.message : e));
         }
     }
-    lines.push('[mgmusic-plugin] 评论完成：' + cfg.devices.length + ' 个账号，失败 ' + failCount);
+    lines.push('[mgmusic] 评论完成：' + cfg.devices.length + ' 个账号，失败 ' + failCount);
     logLines(lines);
     return { ok: failCount === 0, lines: lines };
 }
@@ -1625,7 +1625,7 @@ function reportAll(ms) {
             lines.push('[' + label + '] report FAIL ' + (e && e.message ? e.message : e));
         }
     }
-    lines.push('[mgmusic-plugin] 补报完成：' + cfg.devices.length + ' 个账号，失败 '
+    lines.push('[mgmusic] 补报完成：' + cfg.devices.length + ' 个账号，失败 '
         + failCount + '，耗时 ' + (Date.now() - started) + 'ms');
     logLines(lines);
     return { ok: failCount === 0, lines: lines };
