@@ -96,7 +96,7 @@ cp config.example.json "$PLUGIN_DATA_DIR/mgmusic-plugin/config.json"
 | `uid` / `deviceid` / `msisdn` | 真机抓包的 H5 身份三件套；`deviceid` 必填 |
 | `ce` | 可留空，由 `deviceId + uid + msisdn` 按加法 Vigenère 自铸（2026-11-05 H5 实测顺序，无 `ip`） |
 | `topup_min` | 每账号听歌补报目标（分钟），`0` = 关闭；账号级覆盖全局 |
-| `cookie` | 可选；H5 任务通常不需要 |
+| `cookie` | 实测 H5 头有 `mgAppH5CookieId` + `task-session-id`；插件只接受一个字符串，用 `; ` 拼接。领奖/任务上报建议带上，空值未验证 |
 | `report_ms` | report 模式默认补报毫秒数（默认 60000） |
 | `timeout_ms` | 单次 HTTP 超时（1000–60000） |
 | `cert` | 可选；默认用内置证书 hex 前 32 字符；换证书时填完整 hex |
