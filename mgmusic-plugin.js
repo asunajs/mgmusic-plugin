@@ -578,27 +578,37 @@ function uidFromToken(token) {
 
 function probeLoginUser(token, cookie) {
     const paths = [
-        '/portal/user/info?token=' + encodeURIComponent(token),
-        '/portal/userinfo?token=' + encodeURIComponent(token),
-        '/portal/account/info?token=' + encodeURIComponent(token),
-        '/portal/user/getUserInfo?token=' + encodeURIComponent(token),
-        '/portal/user/current?token=' + encodeURIComponent(token),
-        '/user/nav?sourceid=100001&token=' + encodeURIComponent(token),
+        '/portal/userinfo',
+        '/portal/user/info',
+        '/portal/account/info',
+        '/portal/user/getUserInfo',
+        '/portal/user/current',
+        '/user/nav?sourceid=100001',
+    ];
+    const cookies = [
+        cookie,
+        mergeCookies(cookie, 'mgpt_session_id=' + token),
+        mergeCookies(cookie, 'mgnd_session_id=' + token),
+        mergeCookies(cookie, 'token=' + token),
     ];
     for (let i = 0; i < paths.length; i += 1) {
-        try {
-            const r = passportFetch('GET', paths[i], undefined, {
-                cookie: cookie || '',
-                authorization: 'Bearer ' + token,
-                'x-token': token,
-                accept: 'application/json, text/html, */*; q=0.01',
-            });
-            const d = parseJsonSafe(r.body);
-            let uid = d ? findUid(d, 0) : '';
-            if (!uid) uid = uidFromText(r.body);
-            if (uid) return { uid: uid, cookie: mergeCookies(cookie, setCookieHeader(r)) };
-        } catch (e) {
-            // 探测接口失败不阻断登录；最终由 uid 是否存在决定
+        for (let j = 0; j < cookies.length; j += 1) {
+            try {
+                const sep = paths[i].indexOf('?') >= 0 ? '&' : '?';
+                const url = paths[i] + sep + 'token=' + encodeURIComponent(token);
+                const r = passportFetch('GET', url, undefined, {
+                    cookie: cookies[j] || '',
+                    authorization: 'Bearer ' + token,
+                    'x-token': token,
+                    accept: 'application/json, text/html, */*; q=0.01',
+                });
+                const d = parseJsonSafe(r.body);
+                let uid = d ? findUid(d, 0) : '';
+                if (!uid) uid = uidFromText(r.body);
+                if (uid) return { uid: uid, cookie: mergeCookies(cookies[j], setCookieHeader(r)) };
+            } catch (e) {
+                // 继续探测；不在日志里打印 token
+            }
         }
     }
     return null;
@@ -666,12 +676,13 @@ function followLoginRedirect(redirectURL, token, cookie) {
     const url = raw + sep + 'callbackURL=&relayState=&token=' + encodeURIComponent(token || '')
         + '&logintype=SMS_CODE';
     try {
+        const ck = mergeCookies(cookie, 'mgpt_session_id=' + token);
         const r = fetchRaw('GET', url, loginHeaders({
-            cookie: cookie || '',
+            cookie: ck,
             accept: 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
         }), undefined, { timeout_ms: 15000, tls: '' });
         return {
-            cookie: mergeCookies(cookie, setCookieHeader(r)),
+            cookie: mergeCookies(ck, setCookieHeader(r)),
             uid: uidFromText(r.body) || uidFromText(url),
             body: r.body || '',
         };
