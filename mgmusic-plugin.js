@@ -28,7 +28,7 @@ import {
 } from 'host-api';
 import fs from 'node:fs';
 
-const VERSION = '0.1.5';
+const VERSION = '0.1.6';
 const PLUGIN = 'mgmusic-plugin';
 const API = '/plugins/mgmusic-plugin/api';
 
@@ -68,6 +68,7 @@ const COMMENT_TASK_ID = 'c840d039adfd4c04920d92c04120baa8';
 const DEFAULTS = {
     devices: [],
     topup_min: 30,
+    readonly: false,
     report_ms: 60000,
     timeout_ms: 15000,
     cert: '',
@@ -741,7 +742,7 @@ function loginWithCode(msisdn, code) {
     }
     try { fs.unlinkSync('login-pending.json'); } catch (e) { /* 没有就忽略 */ }
     const lines = ['[migu-' + phone.slice(-4) + '] 短信登录成功，H5 凭证已生成'
-        + '（uid=0, deviceid=' + mask(deviceid, 8, 4) + '）'];
+        + '（uid=' + mask(String(uid), 6, 4) + ', deviceid=' + mask(deviceid, 8, 4) + '）'];
     try {
         const st = queryState(dev, cfg);
         lines.push('[migu-' + phone.slice(-4) + '] H5 凭证测试：音符=' + st.bean
@@ -771,6 +772,7 @@ function loadConfig() {
     cfg.comment = Object.assign({}, DEFAULTS.comment,
         (raw && typeof raw.comment === 'object' && !Array.isArray(raw.comment)) ? raw.comment : {});
     cfg.topup_min = clampInt(cfg.topup_min, 0, 1440, DEFAULTS.topup_min);
+    cfg.readonly = !!cfg.readonly;
     cfg.report_ms = clampInt(cfg.report_ms, 1000, 6 * 3600 * 1000, DEFAULTS.report_ms);
     cfg.timeout_ms = clampInt(cfg.timeout_ms, 1000, 60000, DEFAULTS.timeout_ms);
     cfg.cert = typeof cfg.cert === 'string' ? cfg.cert.trim() : '';
@@ -1105,6 +1107,18 @@ function runDevice(dev, cfg, label) {
     const st = queryState(dev, cfg);
     lines.push('[' + label + '] 期初: 音符=' + st.bean + ' 任务数=' + Object.keys(st.tasks).length);
 
+    if (cfg.readonly) {
+        const ids = Object.keys(st.tasks);
+        let done = 0;
+        for (let i = 0; i < ids.length; i += 1) {
+            const t = st.tasks[ids[i]];
+            if (Number(t.completeTime || 0) >= Number(t.needCompleteTime || 1)) done += 1;
+        }
+        lines.push('[' + label + '] readonly=true，只读查询，不执行 login/task-report/领奖');
+        lines.push('[' + label + '] 完成=' + done + '/' + ids.length);
+        return lines;
+    }
+
     const login = callApi(dev, cfg, 'GET', '/act-task/login-access');
     lines.push('[' + label + '] login-access: ' + apiCode(login.data));
 
@@ -1301,6 +1315,7 @@ function validateConfig(input) {
         throw new Error('comment.extra 必须是对象');
     }
     cfg.topup_min = clampInt(cfg.topup_min, 0, 1440, DEFAULTS.topup_min);
+    cfg.readonly = !!cfg.readonly;
     cfg.report_ms = clampInt(cfg.report_ms, 1000, 6 * 3600 * 1000, DEFAULTS.report_ms);
     cfg.timeout_ms = clampInt(cfg.timeout_ms, 1000, 60000, DEFAULTS.timeout_ms);
     cfg.cert = typeof cfg.cert === 'string' ? cfg.cert.trim() : '';

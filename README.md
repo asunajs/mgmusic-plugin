@@ -26,7 +26,7 @@
 也可以手动下载 [`mgmusic-plugin-0.1.1.zip`](https://github.com/asunajs/mgmusic-plugin/releases/download/v0.1.1/mgmusic-plugin-0.1.1.zip)
 后在「插件管理 → 上传」里安装。
 
-> 本地开发版是 **0.1.5**（短信登录/H5 凭证，未发布到商城；商城 Release 仍是 0.1.1）。
+> 本地开发版是 **0.1.6**（短信登录/H5 凭证/readonly，未发布到商城；商城 Release 仍是 0.1.1）。
 
 ## 安装
 
