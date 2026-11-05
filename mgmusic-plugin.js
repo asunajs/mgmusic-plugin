@@ -28,7 +28,7 @@ import {
 } from 'host-api';
 import fs from 'node:fs';
 
-const VERSION = '0.1.3';
+const VERSION = '0.1.4';
 const PLUGIN = 'mgmusic-plugin';
 const API = '/plugins/mgmusic-plugin/api';
 
@@ -718,47 +718,12 @@ function loginWithCode(msisdn, code) {
     if (Number(d.status) !== 2000) {
         throw new Error('登录失败: ' + (d.message || ('status=' + d.status)));
     }
-    const result = d.result || {};
-    const token = String(result.token || '');
-    let cookie = mergeCookies(key.cookie, setCookieHeader(r));
-    let uid = findUid(result, 0);
-    if (!uid) uid = uidFromToken(token);
-    if (!uid) uid = uidFromText(result.redirectURL || '');
-    if (!uid && result.redirectURL) {
-        const followed = followLoginRedirect(result.redirectURL, token, cookie);
-        cookie = followed.cookie;
-        if (followed.uid) uid = followed.uid;
-    }
-    if (!uid && token) {
-        const info = probeLoginUser(token, cookie);
-        if (info) {
-            uid = info.uid;
-            cookie = info.cookie;
-        }
-    }
-    const h5 = fetchH5Cookies(cookie, token);
-    cookie = mergeCookies(cookie, h5.cookie);
-    if (!uid && h5.uid) uid = h5.uid;
-    if (!uid) uid = uidFromCookies(cookie);
-    if (!uid) {
-        const keys = (result && typeof result === 'object') ? Object.keys(result).join(',') : '';
-        const rurl = String(result.redirectURL || '');
-        const rpath = rurl.replace(/^https?:\/\/[^/]+/i, '').split('?')[0] || rurl;
-        pendingLogin = {
-            msisdn: phone, token: token, redirectURL: rurl,
-            cookie: cookie || '', at: Date.now(),
-        };
-        try {
-            fs.writeFileSync('login-pending.json', JSON.stringify(pendingLogin), 'utf8');
-        } catch (e) { /* 本地暂存失败不阻断错误返回 */ }
-        throw new Error('登录成功，但没解析到 uid（字段：' + keys
-            + '；redirect=' + rpath + '；tokenLen=' + token.length
-            + '）；这次 token 已暂存在插件数据目录，不用再发码，等我补 SSO 解析');
-    }
 
+    // 金币中心 H5 实测只按 ce 里的 msisdn + deviceid 记账；passport uid 不参与。
+    // 短信校验只用来确认手机号归属，登录成功后用 uid=0 自铸 H5 ce。
     const deviceid = uuidV4();
-    const ce = makeCe(String(uid), phone, deviceid);
-    const cfg = saveLoginDevice(phone, uid, deviceid, ce, cookie);
+    const ce = makeCe('0', phone, deviceid);
+    const cfg = saveLoginDevice(phone, '0', deviceid, ce, '');
     let dev = null;
     for (let i = 0; i < cfg.devices.length; i += 1) {
         if (String(cfg.devices[i].msisdn || '') === phone) {
@@ -766,8 +731,9 @@ function loginWithCode(msisdn, code) {
             break;
         }
     }
-    const lines = ['[migu-' + phone.slice(-4) + '] 登录成功：uid='
-        + mask(uid, 6, 4) + ' deviceid=' + mask(deviceid, 8, 4)];
+    try { fs.unlinkSync('login-pending.json'); } catch (e) { /* 没有就忽略 */ }
+    const lines = ['[migu-' + phone.slice(-4) + '] 短信登录成功，H5 凭证已生成'
+        + '（uid=0, deviceid=' + mask(deviceid, 8, 4) + '）'];
     try {
         const st = queryState(dev, cfg);
         lines.push('[migu-' + phone.slice(-4) + '] H5 凭证测试：音符=' + st.bean
