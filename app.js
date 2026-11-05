@@ -111,9 +111,9 @@ function renderAccounts() {
   const list = $('account-list');
   list.textContent = '';
 
-  const mode = cfg.readonly ? '只读模式' : '可写';
+  const mode = (isAdminView() && cfg.readonly) ? ' · 只读模式' : '';
   $('account-summary').textContent = devices.length
-    ? devices.length + ' 个账号 · ' + mode
+    ? devices.length + ' 个账号' + mode
     : '还没有账号';
   $('account-empty').hidden = devices.length > 0;
 
@@ -135,7 +135,7 @@ function renderAccounts() {
     source.textContent = sourceLabel(dev);
     title.appendChild(source);
 
-    if (cfg.readonly) {
+    if (isAdminView() && cfg.readonly) {
       const ro = document.createElement('span');
       ro.className = 'badge soft';
       ro.textContent = '只读';
@@ -208,6 +208,12 @@ function renderAll() {
   if (report) {
     report.disabled = readonly;
     report.title = readonly ? '只读模式下不会补报/领奖' : '';
+  }
+  const runHint = $('run-hint');
+  if (runHint) {
+    runHint.textContent = readonly
+      ? '当前是维护者开启的只读模式：只查询，不签到、不上报、不领奖。'
+      : '执行登录、任务上报和领奖；结果会显示在下面。';
   }
 }
 
