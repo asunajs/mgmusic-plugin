@@ -211,6 +211,16 @@ function renderAll() {
   }
 }
 
+function isAdminView() {
+  const query = new URLSearchParams(window.location.search);
+  return query.get('admin') === '1' || window.location.hash === '#admin';
+}
+
+function applyAdminView() {
+  const card = $('settings-card');
+  if (card) card.hidden = !isAdminView();
+}
+
 async function loadAll() {
   setState('idle', '读取中…');
   setHint('settings-hint', '', '');
@@ -467,4 +477,5 @@ $('status').addEventListener('click', doStatus);
 $('run').addEventListener('click', doRun);
 $('report').addEventListener('click', doReport);
 
+applyAdminView();
 loadAll();
