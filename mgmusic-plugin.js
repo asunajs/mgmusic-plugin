@@ -86,7 +86,7 @@ const DEFAULTS = {
         target_comment_id: '',
         log_id: '',
         fk_token: '',
-        source: '1',
+        source: 'app',
         mode: 'native', // native = V005 原生头；h5 = H5 头
         path: '/user/api/comment/add/v2.0',
         body: null,
