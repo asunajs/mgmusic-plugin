@@ -9,7 +9,7 @@
 //   report —— 手动/面板建任务：补报一次 song-duration 并领奖
 //
 // 说明：
-//   · 协议结论基于 2026-10-15 实测
+//   · 协议结论基于 2026-10-15 静态 + 2026-11-05 H5 抓包实测
 //   · songTime 按 ce 记账；上报/领奖必须同一 ce
 //   · 所有接口幂等；重复 report 无副作用
 //   · 咪咕接口对 Accept-Encoding 敏感，统一 identity，避免 gzip 无法解
@@ -28,15 +28,15 @@ import {
 } from 'host-api';
 import fs from 'node:fs';
 
-const VERSION = '0.1.0';
+const VERSION = '0.1.1';
 const PLUGIN = 'mgmusic-plugin';
 const API = '/plugins/mgmusic-plugin/api';
 
 const BASE = 'https://app.c.nf.migu.cn';
 const ACTIVITY = 'MAC_KF_CBH_JBZX';
-const REFERER = 'https://h5.nf.migu.cn/app/v4/n/gold-coin-center/index.html?cfrom=D06_4107_mgyywdys';
-const UA = 'Mozilla/5.0 (Linux; Android 16; M2102K1C Build/SKQ1.211006.001; wv) AppleWebKit/537.36 '
-    + '(KHTML, like Gecko) Version/4.0 Chrome/148.0.7778.215 Mobile Safari/537.36';
+const REFERER = 'https://h5.nf.migu.cn/app/v4/n/gold-coin-center/index.html';
+const UA = 'Mozilla/5.0 (iPad; CPU OS 18_7 like Mac OS X) AppleWebKit/605.1.15 '
+    + '(KHTML, like Gecko) Mobile/15E148 migumobilemusic/8.9.4';
 
 const SD_PATH = '/act-message/report/song-duration/v1';
 const SD_UA = 'Mozilla/5.0 (Linux; U; Android 16; zh-cn; M2102K1C Build/SKQ1.211006.001) AppleWebKit/537.36 '
@@ -125,8 +125,9 @@ function mgEncode(text) {
     return vigenereHex(text, MG_KEY);
 }
 
-function makeCe(uid, ip, msisdn, deviceId) {
-    const pt = 'uid=' + uid + '&ip=' + ip + '&msisdn=' + msisdn + '&deviceId=' + deviceId;
+function makeCe(uid, msisdn, deviceId) {
+    // 2026-11-05 实测 H5 ce 明文：deviceId → uid → msisdn，没有 ip。
+    const pt = 'deviceId=' + deviceId + '&uid=' + uid + '&msisdn=' + msisdn;
     return vigenereHex(pt, MG_KEY);
 }
 
@@ -338,8 +339,7 @@ function devCe(dev) {
     if (!dev || !dev.uid || !dev.msisdn) {
         throw new Error('缺 ce 且缺 uid/msisdn，无法自铸 ce');
     }
-    return makeCe(String(dev.uid), String(dev.ip || '127.0.0.1'),
-                  String(dev.msisdn), String(dev.deviceid || ''));
+    return makeCe(String(dev.uid), String(dev.msisdn), String(dev.deviceid || ''));
 }
 
 function certOf(cfg) {
@@ -381,18 +381,19 @@ function h5Headers(dev, ce) {
         deviceid: dev.deviceid ? String(dev.deviceid) : '',
         imei: 'h5page',
         imsi: 'h5page',
-        channel: '0147151',
+        channel: '0140070',
+        subchannel: '0140070',
         activityid: ACTIVITY,
-        platform: 'H5',
+        platform: 'iOS',
         uid: dev.uid ? String(dev.uid) : '',
-        logid: 'cfrom=D06_4107_mgyywdys&appId=music',
+        logid: 'cfrom=&appId=music',
         'user-agent': UA,
-        version: '8.9.3',
-        ua: 'Android_migu',
+        version: '8.9.4',
+        ua: 'Ios_migu',
         origin: 'https://h5.nf.migu.cn',
-        'x-requested-with': 'cmccwm.mobilemusic',
         referer: REFERER,
         accept: 'application/json, text/plain, */*',
+        'accept-language': 'zh-CN,zh-Hans;q=0.9',
         'accept-encoding': 'identity',
     };
     if (dev.cookie) h.cookie = String(dev.cookie);

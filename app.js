@@ -12,7 +12,6 @@ const TEMPLATE = {
       uid: '<H5页 uid 头>',
       deviceid: '<deviceid 头>',
       msisdn: '<手机号>',
-      ip: '127.0.0.1',
       ce: '',
       topup_min: 30,
       cookie: '',

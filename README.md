@@ -22,7 +22,7 @@
 [`asunajs/mgmusic-plugin`](https://github.com/asunajs/mgmusic-plugin)，Release 里挂的是
 面板能直接解压的 zip。
 
-也可以手动下载 [`mgmusic-plugin-0.1.0.zip`](https://github.com/asunajs/mgmusic-plugin/releases/download/v0.1.0/mgmusic-plugin-0.1.0.zip)
+也可以手动下载 [`mgmusic-plugin-0.1.1.zip`](https://github.com/asunajs/mgmusic-plugin/releases/download/v0.1.1/mgmusic-plugin-0.1.1.zip)
 后在「插件管理 → 上传」里安装。
 
 ## 安装
@@ -78,7 +78,6 @@ cp config.example.json "$PLUGIN_DATA_DIR/mgmusic-plugin/config.json"
       "uid": "<H5 页 uid 头>",
       "deviceid": "<deviceid 头>",
       "msisdn": "<手机号>",
-      "ip": "127.0.0.1",
       "ce": "",
       "topup_min": 30,
       "cookie": ""
@@ -95,8 +94,7 @@ cp config.example.json "$PLUGIN_DATA_DIR/mgmusic-plugin/config.json"
 | 字段 | 说明 |
 |---|---|
 | `uid` / `deviceid` / `msisdn` | 真机抓包的 H5 身份三件套；`deviceid` 必填 |
-| `ce` | 可留空，由 `uid + ip + msisdn + deviceid` 按加法 Vigenère 自铸 |
-| `ip` | 自铸 ce 时用的 IP，默认 `127.0.0.1` |
+| `ce` | 可留空，由 `deviceId + uid + msisdn` 按加法 Vigenère 自铸（2026-11-05 H5 实测顺序，无 `ip`） |
 | `topup_min` | 每账号听歌补报目标（分钟），`0` = 关闭；账号级覆盖全局 |
 | `cookie` | 可选；H5 任务通常不需要 |
 | `report_ms` | report 模式默认补报毫秒数（默认 60000） |
