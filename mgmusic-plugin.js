@@ -562,17 +562,35 @@ function sendLoginCode(msisdn) {
     };
 }
 
+function uidFromToken(token) {
+    const parts = String(token || '').split('.');
+    if (parts.length < 2) return '';
+    try {
+        let p = parts[1].replace(/-/g, '+').replace(/_/g, '/');
+        while (p.length % 4) p += '=';
+        const txt = atob(p);
+        const d = parseJsonSafe(txt);
+        return (d ? findUid(d, 0) : '') || uidFromText(txt);
+    } catch (e) {
+        return '';
+    }
+}
+
 function probeLoginUser(token, cookie) {
     const paths = [
         '/portal/user/info?token=' + encodeURIComponent(token),
         '/portal/userinfo?token=' + encodeURIComponent(token),
+        '/portal/account/info?token=' + encodeURIComponent(token),
         '/portal/user/getUserInfo?token=' + encodeURIComponent(token),
+        '/portal/user/current?token=' + encodeURIComponent(token),
         '/user/nav?sourceid=100001&token=' + encodeURIComponent(token),
     ];
     for (let i = 0; i < paths.length; i += 1) {
         try {
             const r = passportFetch('GET', paths[i], undefined, {
                 cookie: cookie || '',
+                authorization: 'Bearer ' + token,
+                'x-token': token,
                 accept: 'application/json, text/html, */*; q=0.01',
             });
             const d = parseJsonSafe(r.body);
@@ -586,9 +604,10 @@ function probeLoginUser(token, cookie) {
     return null;
 }
 
-function fetchH5Cookies(cookie) {
+function fetchH5Cookies(cookie, token) {
     try {
-        const r = fetchRaw('GET', REFERER, {
+        const url = REFERER + (token ? ('?token=' + encodeURIComponent(token)) : '');
+        const r = fetchRaw('GET', url, {
             'user-agent': UA,
             accept: 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
             'accept-language': 'zh-CN,zh-Hans;q=0.9',
@@ -637,7 +656,11 @@ function saveLoginDevice(msisdn, uid, deviceid, ce, cookie) {
 }
 
 function followLoginRedirect(redirectURL, token, cookie) {
-    const raw = String(redirectURL || '').trim();
+    let raw = String(redirectURL || '').trim();
+    if (!raw) return { cookie: cookie, uid: '', body: '' };
+    if (raw.indexOf('//') === 0) raw = 'https:' + raw;
+    else if (raw.charAt(0) === '/') raw = PASSPORT + raw;
+    else if (!/^https?:\/\//i.test(raw)) raw = PASSPORT + '/' + raw;
     if (!/^https?:\/\//i.test(raw)) return { cookie: cookie, uid: '', body: '' };
     const sep = raw.indexOf('?') >= 0 ? '&' : '?';
     const url = raw + sep + 'callbackURL=&relayState=&token=' + encodeURIComponent(token || '')
@@ -687,6 +710,7 @@ function loginWithCode(msisdn, code) {
     const token = String(result.token || '');
     let cookie = mergeCookies(key.cookie, setCookieHeader(r));
     let uid = findUid(result, 0);
+    if (!uid) uid = uidFromToken(token);
     if (!uid) uid = uidFromText(result.redirectURL || '');
     if (!uid && result.redirectURL) {
         const followed = followLoginRedirect(result.redirectURL, token, cookie);
@@ -700,13 +724,17 @@ function loginWithCode(msisdn, code) {
             cookie = info.cookie;
         }
     }
-    const h5 = fetchH5Cookies(cookie);
+    const h5 = fetchH5Cookies(cookie, token);
     cookie = mergeCookies(cookie, h5.cookie);
     if (!uid && h5.uid) uid = h5.uid;
     if (!uid) uid = uidFromCookies(cookie);
     if (!uid) {
         const keys = (result && typeof result === 'object') ? Object.keys(result).join(',') : '';
-        throw new Error('登录成功，但没解析到 uid（返回字段：' + keys + '）；先保留这次登录结果，后面补 userinfo 接口');
+        const rurl = String(result.redirectURL || '');
+        const rpath = rurl.replace(/^https?:\/\/[^/]+/i, '').split('?')[0] || rurl;
+        throw new Error('登录成功，但没解析到 uid（字段：' + keys
+            + '；redirect=' + rpath + '；tokenLen=' + token.length
+            + '）；先保留这次登录结果，后面补 userinfo 接口');
     }
 
     const deviceid = uuidV4();
