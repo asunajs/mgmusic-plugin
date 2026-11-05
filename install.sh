@@ -36,4 +36,4 @@ fi
 
 echo
 echo "完成。面板会在 30 秒内扫描到插件；也可以在「插件列表」里点重载。"
-echo "然后打开侧边栏「咪咕音乐」填 uid/deviceid/msisdn。"
+echo "然后打开侧边栏「咪咕音乐」；推荐先运行 node scripts/sync-macos-account.mjs 自动导入 App 账号。"

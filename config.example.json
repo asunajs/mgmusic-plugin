@@ -1,4 +1,7 @@
 {
+  "app_import": {
+    "enabled": true
+  },
   "devices": [],
   "topup_min": 30,
   "report_ms": 60000,

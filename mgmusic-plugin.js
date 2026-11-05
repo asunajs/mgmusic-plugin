@@ -28,7 +28,7 @@ import {
 } from 'host-api';
 import fs from 'node:fs';
 
-const VERSION = '0.1.6';
+const VERSION = '0.1.7';
 const PLUGIN = 'mgmusic-plugin';
 const API = '/plugins/mgmusic-plugin/api';
 
@@ -69,6 +69,9 @@ const DEFAULTS = {
     devices: [],
     topup_min: 30,
     readonly: false,
+    app_import: {
+        enabled: true, // 仅 Node 运行时生效；QuickJS 读不到 App 容器
+    },
     report_ms: 60000,
     timeout_ms: 15000,
     cert: '',
@@ -91,6 +94,8 @@ const DEFAULTS = {
 };
 
 const HEX = '0123456789abcdef';
+const IS_NODE = typeof process !== 'undefined' && !!(process.versions && process.versions.node);
+const MAC_APP_PREFS = 'Library/Containers/com.migu.migumobilemusic/Data/Library/Preferences/com.migu.migumobilemusic.plist';
 
 // ──────────────────────────────────────────────────────────── 字节 / 编码
 
@@ -334,6 +339,145 @@ function uuidV4() {
     }
     return s;
 }
+
+
+// ──────────────────────────────────────────────────────────── macOS App 账号导入
+//
+// 咪咕 macOS/iPad App 的 kMGLoginSDKUserInfo 里存着当前登录账号的
+// userId / msisdn（二进制 plist 内是 UTF-8 JSON）。这是“真实 uid”的可靠来源，
+// 比网页 passport 登录（不返回 uid）和 uid=0 兜底安全得多。
+//
+// 注意：QuickJS 的 node:fs 被限制在插件数据根，读不到 App 容器；
+// 只有面板把插件运行时切成 Node 时这段才会生效。QuickJS 下静默跳过。
+
+function balancedJsonAt(text, start) {
+    let depth = 0;
+    let inStr = false;
+    let esc = false;
+    for (let i = start; i < text.length; i += 1) {
+        const ch = text.charAt(i);
+        if (inStr) {
+            if (esc) esc = false;
+            else if (ch === '\\') esc = true;
+            else if (ch === '"') inStr = false;
+            continue;
+        }
+        if (ch === '"') inStr = true;
+        else if (ch === '{') depth += 1;
+        else if (ch === '}') {
+            depth -= 1;
+            if (depth === 0) return text.slice(start, i + 1);
+        }
+    }
+    return '';
+}
+
+/** 插件数据根里的 app-account.json：由 scripts/sync-macos-account.mjs 生成。
+ *  QuickJS 也能读这个相对路径；这样不切 Node 运行时也能自动导入。 */
+function readAccountFile() {
+    try {
+        if (!fs.existsSync('app-account.json')) return null;
+        const j = JSON.parse(fs.readFileSync('app-account.json', 'utf8'));
+        const uid = String((j && j.uid) || '').trim();
+        const msisdn = String((j && j.msisdn) || '').trim();
+        if (!uid || uid === '0' || !/^1[3-9]\d{9}$/.test(msisdn)) return null;
+        return {
+            uid: uid,
+            msisdn: msisdn,
+            deviceid: String((j && j.deviceid) || '').trim(),
+            source: 'app-account.json',
+        };
+    } catch (e) {
+        return null;
+    }
+}
+
+function readMacAppAccount() {
+    const fromFile = readAccountFile();
+    if (fromFile) return fromFile;
+    if (!IS_NODE) return null;
+    const home = String(process.env.HOME || '');
+    if (!home) return null;
+    const p = home + '/' + MAC_APP_PREFS;
+    let text;
+    try {
+        if (!fs.existsSync(p)) return null;
+        text = fs.readFileSync(p).toString('utf8');
+    } catch (e) {
+        return null;
+    }
+    let obj = null;
+    const start = text.indexOf('{"videoUserItem"');
+    if (start >= 0) {
+        const raw = balancedJsonAt(text, start);
+        if (raw) {
+            try { obj = JSON.parse(raw); } catch (e) { obj = null; }
+        }
+    }
+    let uid = '';
+    let msisdn = '';
+    if (obj) {
+        uid = String(obj.userId || '').trim();
+        msisdn = String(obj.msisdn || obj.accountName || '').trim();
+    }
+    if (!uid) {
+        const um = text.match(/"userId"\s*:\s*"([^"]+)"/);
+        if (um) uid = String(um[1]).trim();
+    }
+    if (!msisdn) {
+        const mm = text.match(/"msisdn"\s*:\s*"(\d{11})"/);
+        if (mm) msisdn = String(mm[1]).trim();
+    }
+    if (!uid || uid === '0' || !/^1[3-9]\d{9}$/.test(msisdn)) return null;
+    // 设备 id 不在这里猜：二进制 plist 的 key/value 不在同一段，
+    // 优先沿用配置里已有的 deviceid；没有才生成新的 UUID。
+    return { uid: uid, msisdn: msisdn, deviceid: '', source: 'macos-app' };
+}
+
+/** 把 App 当前登录账号同步进配置；只写 uid/msisdn/deviceid/ce，不保存 passId/token。 */
+function importMacAppAccount() {
+    const cfg = loadConfig();
+    if (!cfg.app_import || !cfg.app_import.enabled) return null;
+    const acc = readMacAppAccount();
+    if (!acc) return null;
+    let idx = -1;
+    for (let i = 0; i < cfg.devices.length; i += 1) {
+        if (String(cfg.devices[i].msisdn || '') === acc.msisdn) { idx = i; break; }
+    }
+    const existing = idx >= 0 ? cfg.devices[idx] : null;
+    if (!acc.deviceid) {
+        acc.deviceid = (existing && existing.deviceid) ? String(existing.deviceid) : uuidV4();
+    }
+    const ce = makeCe(acc.uid, acc.msisdn, acc.deviceid);
+    let changed = false;
+    if (idx < 0) {
+        cfg.devices.push({
+            label: 'migu-' + acc.msisdn.slice(-4),
+            msisdn: acc.msisdn,
+            uid: acc.uid,
+            deviceid: acc.deviceid,
+            ce: ce,
+            cookie: '',
+            topup_min: cfg.topup_min,
+            source: 'macos-app',
+        });
+        idx = cfg.devices.length - 1;
+        changed = true;
+    } else {
+        const d = cfg.devices[idx];
+        const pairs = [['uid', acc.uid], ['msisdn', acc.msisdn], ['deviceid', acc.deviceid], ['ce', ce]];
+        for (let j = 0; j < pairs.length; j += 1) {
+            if (String(d[pairs[j][0]] || '') !== String(pairs[j][1])) {
+                d[pairs[j][0]] = pairs[j][1];
+                changed = true;
+            }
+        }
+        if (!d.source) { d.source = 'macos-app'; changed = true; }
+    }
+    if (changed) saveConfig(cfg);
+    return { account: acc, device: cfg.devices[idx], changed: changed };
+}
+
 
 
 // ──────────────────────────────────────────────────────────── 短信登录（passport 网页版）
@@ -723,14 +867,24 @@ function loginWithCode(msisdn, code) {
         throw new Error('登录失败: ' + (d.message || ('status=' + d.status)));
     }
 
-    // 不能再用 uid=0：H5 会把 uid=0 当游客/其他账号（实测 userId=0、余额不是本人）。
-    // 只有拿到真实 uid 才保存设备；拿不到就保持不写入，避免错账号领豆。
-    const uid = findUid(result);
+    // 网页 passport 只回 LTToken/USessionID，不回 uid；真实 uid 从 macOS App
+    // 的 kMGLoginSDKUserInfo 取（Node 运行时）。拿不到就绝不写 uid=0。
+    let uid = '';
+    let imported = null;
+    try {
+        imported = importMacAppAccount();
+        if (imported && String(imported.account.msisdn) === phone) {
+            uid = String(imported.account.uid || '');
+        }
+    } catch (e) { /* 导入失败就继续找响应里的 uid */ }
+    if (!uid) uid = findUid(d);
     if (!uid || String(uid) === '0') {
         throw new Error('登录成功，但没解析到真实 uid；为避免写错账号，本次不保存设备。'
-            + '需要补 SSO/userinfo 的 uid 解析后再登录。');
+            + '请把面板运行时切到 Node，并保持 macOS App 已登录，让插件自动读取 App 账号；'
+            + '网页 passport 本身不返回 uid。');
     }
-    const deviceid = uuidV4();
+    const deviceid = (imported && imported.device && imported.device.deviceid)
+        ? String(imported.device.deviceid) : uuidV4();
     const ce = makeCe(uid, phone, deviceid);
     const cfg = saveLoginDevice(phone, uid, deviceid, ce, '');
     let dev = null;
@@ -769,6 +923,9 @@ function loadConfig() {
     }
     const cfg = Object.assign({}, DEFAULTS, raw);
     if (!Array.isArray(cfg.devices)) cfg.devices = [];
+    cfg.app_import = Object.assign({}, DEFAULTS.app_import,
+        (raw && typeof raw.app_import === 'object' && !Array.isArray(raw.app_import)) ? raw.app_import : {});
+    cfg.app_import.enabled = !!cfg.app_import.enabled;
     cfg.comment = Object.assign({}, DEFAULTS.comment,
         (raw && typeof raw.comment === 'object' && !Array.isArray(raw.comment)) ? raw.comment : {});
     cfg.topup_min = clampInt(cfg.topup_min, 0, 1440, DEFAULTS.topup_min);
@@ -1021,6 +1178,27 @@ function queryState(dev, cfg) {
     return { tasks: tasks, bean: bean };
 }
 
+/** 读 H5 当前登录身份；这是防“uid/ce 对不上却照写”的硬校验。 */
+function queryIdentity(dev, cfg) {
+    const r = ensureOk(callApi(dev, cfg, 'GET', '/v2.0/user/getMyPage.do'), 'getMyPage');
+    const u = (r.data && r.data.userInfo) || {};
+    return {
+        uid: String(u.userId || ''),
+        nick: String(u.nickName || ''),
+        msisdn: String(u.msisdn || ''),
+    };
+}
+
+function assertIdentity(dev, cfg) {
+    const id = queryIdentity(dev, cfg);
+    if (!id.uid) throw new Error('身份校验失败：getMyPage 没返回 userId');
+    if (dev.uid && String(dev.uid) !== id.uid) {
+        throw new Error('身份校验失败：配置 uid=' + mask(String(dev.uid), 6, 4)
+            + '，服务端返回 uid=' + mask(id.uid, 6, 4) + '（拒绝写错账号）');
+    }
+    return id;
+}
+
 function getSongTask(dev, cfg) {
     const r = ensureOk(callApi(dev, cfg, 'GET', '/act-jbzx/song-task/v2.0'), 'song-task');
     return r.data || {};
@@ -1104,6 +1282,16 @@ function topupSongtime(dev, cfg, label) {
 
 function runDevice(dev, cfg, label) {
     const lines = [];
+    let id;
+    try {
+        id = assertIdentity(dev, cfg);
+        lines.push('[' + label + '] 身份: uid=' + mask(id.uid, 6, 4)
+            + (id.nick ? (' nick=' + id.nick) : ''));
+    } catch (e) {
+        lines.push('[' + label + '] ' + (e && e.message ? e.message : e));
+        lines.push('[' + label + '] 身份不一致/读不到，本轮不执行任何写操作');
+        return lines;
+    }
     const st = queryState(dev, cfg);
     lines.push('[' + label + '] 期初: 音符=' + st.bean + ' 任务数=' + Object.keys(st.tasks).length);
 
@@ -1174,7 +1362,20 @@ function logLines(lines) {
 }
 
 function runDaily() {
-    const cfg = loadConfig();
+    let cfg = loadConfig();
+    try {
+        const imported = importMacAppAccount();
+        if (imported) {
+            cfg = loadConfig();
+            if (imported.changed) {
+                info('[' + PLUGIN + '] 已从 macOS App 同步账号 uid='
+                    + mask(imported.account.uid, 6, 4) + '（msisdn='
+                    + mask(imported.account.msisdn, 3, 4) + '）');
+            }
+        }
+    } catch (e) {
+        warn('[' + PLUGIN + '] macOS App 账号同步失败：' + (e && e.message ? e.message : e));
+    }
     if (!cfg.devices.length) {
         const line = '[' + PLUGIN + '] 未配置 devices，跳过';
         warn(line);
@@ -1203,13 +1404,28 @@ function runDaily() {
 }
 
 function statusAll() {
-    const cfg = loadConfig();
+    let cfg = loadConfig();
+    try {
+        const imported = importMacAppAccount();
+        if (imported) {
+            cfg = loadConfig();
+            if (imported.changed) {
+                info('[' + PLUGIN + '] 已从 macOS App 同步账号 uid='
+                    + mask(imported.account.uid, 6, 4));
+            }
+        }
+    } catch (e) {
+        warn('[' + PLUGIN + '] macOS App 账号同步失败：' + (e && e.message ? e.message : e));
+    }
     const lines = [];
     let failCount = 0;
     for (let i = 0; i < cfg.devices.length; i += 1) {
         const dev = cfg.devices[i];
         const label = deviceLabel(dev, i);
         try {
+            const id = assertIdentity(dev, cfg);
+            lines.push('[' + label + '] 身份: uid=' + mask(id.uid, 6, 4)
+                + (id.nick ? (' nick=' + id.nick) : ''));
             const st = queryState(dev, cfg);
             lines.push('[' + label + '] 音符=' + st.bean + ' ce=' + mask(devCe(dev), 8, 4));
             const ids = Object.keys(st.tasks);
@@ -1293,6 +1509,11 @@ function validateConfig(input) {
     if (input.comment !== undefined && (typeof input.comment !== 'object' || Array.isArray(input.comment))) {
         throw new Error('comment 必须是对象');
     }
+    if (input.app_import !== undefined && (typeof input.app_import !== 'object' || Array.isArray(input.app_import))) {
+        throw new Error('app_import 必须是对象');
+    }
+    cfg.app_import = Object.assign({}, DEFAULTS.app_import, input.app_import || {});
+    cfg.app_import.enabled = !!cfg.app_import.enabled;
     cfg.comment = Object.assign({}, DEFAULTS.comment, input.comment || {});
     cfg.comment.enabled = !!cfg.comment.enabled;
     cfg.comment.song_id = String(cfg.comment.song_id || '').trim();
@@ -1397,6 +1618,27 @@ register_route(API + '/status', 'GET', route(function () {
     return json(200, statusAll());
 }));
 
+register_route(API + '/app-import', 'POST', route(function () {
+    const r = importMacAppAccount();
+    if (!r) {
+        return json(200, {
+            ok: false,
+            runtime: IS_NODE ? 'node' : 'quickjs',
+            error: IS_NODE
+                ? '没读到 macOS App 的 kMGLoginSDKUserInfo（App 是否已登录？）'
+                : 'QuickJS 读不到 App 容器；请把本插件运行时切到 Node 后再导入',
+        });
+    }
+    return json(200, {
+        ok: true,
+        runtime: IS_NODE ? 'node' : 'quickjs',
+        changed: r.changed,
+        uid: mask(String(r.account.uid), 6, 4),
+        msisdn: mask(String(r.account.msisdn), 3, 4),
+        deviceid: mask(String(r.account.deviceid), 8, 4),
+    });
+}));
+
 register_route(API + '/run', 'POST', route(function () {
     return json(200, runDaily());
 }));
@@ -1436,9 +1678,16 @@ register_handler('report', function () {
 });
 
 try {
-    const cfg = loadConfig();
+    let cfg = loadConfig();
+    let imported = null;
+    try { imported = importMacAppAccount(); } catch (e) {
+        warn('[' + PLUGIN + '] macOS App 账号同步失败：' + (e && e.message ? e.message : e));
+    }
+    if (imported) cfg = loadConfig();
     info(PLUGIN + ' v' + VERSION + ' 已加载：' + cfg.devices.length
-        + ' 个设备，topup_min=' + cfg.topup_min);
+        + ' 个设备，topup_min=' + cfg.topup_min
+        + '，runtime=' + (IS_NODE ? 'node' : 'quickjs')
+        + (imported ? '，已从 macOS App 同步 uid=' + mask(imported.account.uid, 6, 4) : ''));
 } catch (e) {
     warn(PLUGIN + ' v' + VERSION + ' 已加载，但配置读取失败：'
         + (e && e.message ? e.message : e));

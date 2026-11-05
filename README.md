@@ -1,10 +1,10 @@
-# mgmusic-plugin —— 咪咕音乐金币中心（QuickJS 插件）
+# mgmusic-plugin —— 咪咕音乐金币中心（QuickJS / Node 插件）
 
-`mgmusic-plugin` 是插件面板的 QuickJS 插件，提供以下能力：
+`mgmusic-plugin` 是插件面板的 JS 插件，提供以下能力：
 
 - **daily 定时任务**：每天 00:05 / 12:05 / 22:05 执行 login-access、qsq、zyd-sign、窗口打卡、听歌补报、领奖
 - **report 手动任务**：补报一次 `song-duration` 并领取已达档位
-- **短信登录**：手机号 + 验证码自动换 uid/deviceid/ce/cookie，不再手动抓包
+- **macOS App 账号同步**：从已登录的咪咕 App 读取真实 uid/msisdn，自动生成 ce；不再手动抓包
 - **自带配置页**：设备列表、状态查询、立即执行、补报、签名自检
 
 ## 文件
@@ -14,6 +14,7 @@
 | `mgmusic-plugin.js` | 插件后端（QuickJS / ESM，安装到 `plugins/js/`） |
 | `index.html` / `app.js` / `style.css` | 插件配置页（安装到 `plugins/mgmusic-plugin/`） |
 | `config.example.json` | 配置模板（安装到插件数据目录，首次安装时复制） |
+| `scripts/sync-macos-account.mjs` | 从已登录的 macOS 咪咕 App 同步真实 uid/msisdn 到插件数据根 |
 | `install.sh` | 一键安装到本机面板 |
 
 ## 面板商城
@@ -26,7 +27,7 @@
 也可以手动下载 [`mgmusic-plugin-0.1.1.zip`](https://github.com/asunajs/mgmusic-plugin/releases/download/v0.1.1/mgmusic-plugin-0.1.1.zip)
 后在「插件管理 → 上传」里安装。
 
-> 本地开发版是 **0.1.6**（短信登录/H5 凭证/readonly，未发布到商城；商城 Release 仍是 0.1.1）。
+> 本地开发版是 **0.1.7**（macOS App 账号同步 + 身份硬校验 + readonly，未发布到商城；商城 Release 仍是 0.1.1）。
 
 ## 安装
 
@@ -69,12 +70,34 @@ cp config.example.json "$PLUGIN_DATA_DIR/mgmusic-plugin/config.json"
 `<PLUGIN_DATA_DIR>/mgmusic-plugin/config.json`，旧目录不删。装完新插件后，
 到面板「插件列表」里把旧的 `cmusic-plugin` 删掉即可。
 
+## 自动获取真实 uid（推荐）
+
+网页 passport 登录只返回 `LTToken` / `USessionID`，**不返回 uid**；用 `uid=0` 会被 H5 当成游客/其他账号，导致“任务显示已领、豆没到账”。0.1.7 改成从 **macOS 咪咕 App 的偏好设置**取当前登录账号：
+
+```bash
+# 1) 先打开 macOS 版咪咕音乐并完成登录
+# 2) 把 App 当前账号同步到插件数据根（只写 uid/msisdn/deviceid，不写 passId/token）
+node scripts/sync-macos-account.mjs
+```
+
+生成 `<PLUGIN_DATA_DIR>/mgmusic-plugin/app-account.json` 后，插件在 `status` / `run` 时会自动导入，并：
+
+1. 用真实 uid + msisdn + deviceid 重新生成 `ce`；
+2. 调 `/v2.0/user/getMyPage.do` 做 **身份硬校验**；
+3. 服务端返回的 `userId` 与配置不一致时，**本轮拒绝任何写操作**（不会再把豆写到错账号）。
+
+> 想让账号变化后自动刷新，可把上面这条命令放进 cron / launchd（例如每 10 分钟一次）。
+> 面板把插件运行时切到 **Node** 时，插件也可以直接读 App 偏好设置；QuickJS 下走 `app-account.json` 这条稳定路径。
+
 ## 配置
 
 `<PLUGIN_DATA_DIR>/mgmusic-plugin/config.json`：
 
 ```json
 {
+  "app_import": {
+    "enabled": true
+  },
   "devices": [
     {
       "label": "account-1",
@@ -83,7 +106,8 @@ cp config.example.json "$PLUGIN_DATA_DIR/mgmusic-plugin/config.json"
       "msisdn": "<手机号>",
       "ce": "",
       "topup_min": 30,
-      "cookie": ""
+      "cookie": "",
+      "source": "app-account.json"
     }
   ],
   "topup_min": 30,
@@ -111,7 +135,8 @@ cp config.example.json "$PLUGIN_DATA_DIR/mgmusic-plugin/config.json"
 
 | 字段 | 说明 |
 |---|---|
-| `uid` / `deviceid` / `msisdn` | 真机抓包的 H5 身份三件套；`deviceid` 必填 |
+| `app_import.enabled` | 是否允许从 `app-account.json` / macOS App 自动同步账号（默认 true） |
+| `uid` / `deviceid` / `msisdn` | H5 身份三件套；`deviceid` 必填。`source=app-account.json` 表示由同步脚本写入 |
 | `ce` | 可留空，由 `deviceId + uid + msisdn` 按加法 Vigenère 自铸（2026-11-05 H5 实测顺序，无 `ip`） |
 | `topup_min` | 每账号听歌补报目标（分钟），`0` = 关闭；账号级覆盖全局 |
 | `cookie` | 实测 H5 头有 `mgAppH5CookieId` + `task-session-id`；插件只接受一个字符串，用 `; ` 拼接。领奖/任务上报建议带上，空值未验证 |
