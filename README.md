@@ -5,7 +5,7 @@
 - **daily 定时任务**：每天 00:05 / 12:05 / 22:05 执行 login-access、qsq、zyd-sign、窗口打卡、听歌补报、领奖
 - **report 手动任务**：补报一次 `song-duration` 并领取已达档位
 - **macOS App 账号同步**：从已登录的咪咕 App 读取真实 uid/msisdn，自动生成 ce；不再手动抓包
-- **自带配置页**：设备列表、状态查询、立即执行、补报、签名自检
+- **自带配置页**：账号卡片、短信登录、状态查询、立即执行、补报、签名自检
 
 ## 页面
 
@@ -23,12 +23,42 @@ uid / deviceid / ce 由短信登录或 App 同步自动维护，不需要用户�
 页面主题由 `boot.js` 跟随面板：读取同源 localStorage 的 `panel-theme-v2`，并监听 `storage` 事件；面板切深/浅色时插件页即时同步，不需要刷新。
 
 
+
+## 日志与推送
+
+### 日志
+
+`daily` 每次运行都会记录：
+
+- 开始：账号数量
+- 身份校验：uid / 昵称（脱敏）
+- 期初：音符、任务数
+- 每个动作：`login-access`、`task-report`、评论、听歌补报、领奖
+- 每个任务的跳过原因：已完成 / 非窗口时段 / 补报关闭
+- 结果：音符 `before→after`、完成数、领取数、动作数、跳过数、失败数
+- 汇总：账号数、失败账号数、领取数、耗时
+
+失败行走 `fail` 日志，正常结果走 `success` / `info`。面板「运行记录 → 日志」和推送正文里都能看到这些行。
+
+### 推送
+
+推送是**面板级**的，不要求插件自己配 webhook：
+
+1. 面板「设置 → 推送」里配置渠道；
+2. 打开「失败时通知」；需要成功通知时再打开「成功时通知」；
+3. 「正文带日志」选「仅错误」或「全部」，推送里就会带这次运行的结论和日志；
+4. 面板任务卡上的摘要会由插件动态更新为：
+   `1 个账号 · 音符 5→5 · 完成 3/9 · 领取 +0`
+
+插件在**任一账号或任务动作失败**时会让 `daily` 任务失败，从而触发面板的失败推送；全部正常时不会伪造失败。手动点插件页的「立即执行 daily」走插件路由，不经过面板调度器，所以不会额外发一条面板推送；定时 `daily` 会正常触发。
+
+
 ## 文件
 
 | 文件 | 作用 |
 |---|---|
 | `mgmusic-plugin.js` | 插件后端（QuickJS / ESM，安装到 `plugins/js/`） |
-| `index.html` / `app.js` / `style.css` | 插件配置页（安装到 `plugins/mgmusic-plugin/`） |
+| `index.html` / `app.js` / `style.css` / `boot.js` | 插件配置页（安装到 `plugins/mgmusic-plugin/`） |
 | `config.example.json` | 配置模板（安装到插件数据目录，首次安装时复制） |
 | `scripts/sync-macos-account.mjs` | 从已登录的 macOS 咪咕 App 同步真实 uid/msisdn 到插件数据根 |
 | `install.sh` | 一键安装到本机面板 |
@@ -43,7 +73,7 @@ uid / deviceid / ce 由短信登录或 App 同步自动维护，不需要用户�
 也可以手动下载 [`mgmusic-plugin-0.1.1.zip`](https://github.com/asunajs/mgmusic-plugin/releases/download/v0.1.1/mgmusic-plugin-0.1.1.zip)
 后在「插件管理 → 上传」里安装。
 
-> 本地开发版是 **0.2.0**（短信登录按手机号解析 uid + macOS App 同步 + 身份硬校验，未发布到商城；商城 Release 仍是 0.1.1）。
+> 本地开发版是 **0.2.2**（短信登录按手机号解析 uid + macOS App 同步 + 身份硬校验，未发布到商城；商城 Release 仍是 0.1.1）。
 
 ## 安装
 
@@ -67,7 +97,7 @@ PLUGIN_DATA_DIR  = ~/Library/Application Support/plugin-panel/data/plugin-data
 cp mgmusic-plugin.js  "$PLUGINS_DIR/js/"
 # 2) 配置页
 mkdir -p "$PLUGINS_DIR/mgmusic-plugin"
-cp index.html app.js style.css "$PLUGINS_DIR/mgmusic-plugin/"
+cp index.html app.js style.css boot.js "$PLUGINS_DIR/mgmusic-plugin/"
 # 3) 配置（首次）
 mkdir -p "$PLUGIN_DATA_DIR/mgmusic-plugin"
 cp config.example.json "$PLUGIN_DATA_DIR/mgmusic-plugin/config.json"

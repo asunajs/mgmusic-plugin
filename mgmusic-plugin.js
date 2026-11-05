@@ -24,11 +24,12 @@ import {
   register_handler,
   register_route,
   register_nav,
+  set_job_summary,
   http_fetch,
 } from 'host-api';
 import fs from 'node:fs';
 
-const VERSION = '0.2.0';
+const VERSION = '0.2.2';
 const PLUGIN = 'mgmusic-plugin';
 const API = '/plugins/mgmusic-plugin/api';
 
@@ -1260,6 +1261,7 @@ function receiveSongRewards(dev, cfg, label) {
     const songTime = Number(st.songTime || 0);
     const tasks = Array.isArray(st.tasks) ? st.tasks : [];
     let gained = 0;
+    let failed = 0;
     for (let i = 0; i < tasks.length; i += 1) {
         const t = tasks[i];
         if (!t || t.id === undefined) continue;
@@ -1273,11 +1275,12 @@ function receiveSongRewards(dev, cfg, label) {
         } else if (code === '200002') {
             // 已领，静默
         } else {
-            lines.push('[' + label + '] ' + t.id + ': ' + code + ' ' + apiInfo(r.data));
+            failed += 1;
+            lines.push('[' + label + '] ' + t.id + ': FAIL ' + code + ' ' + apiInfo(r.data));
         }
     }
     lines.push('[' + label + '] 听歌: songTime=' + (songTime / 60000).toFixed(1) + 'min 本轮领奖+' + gained);
-    return { lines: lines, gained: gained, songTime: songTime };
+    return { lines: lines, gained: gained, failed: failed, songTime: songTime };
 }
 
 function topupSongtime(dev, cfg, label) {
@@ -1315,21 +1318,48 @@ function topupSongtime(dev, cfg, label) {
 
 function runDevice(dev, cfg, label) {
     const lines = [];
+    const meta = {
+        failed: false,
+        errors: 0,
+        before: -1,
+        after: -1,
+        done: 0,
+        total: 0,
+        claimed: 0,
+        actions: 0,
+        skips: 0,
+    };
+    function markFail() {
+        meta.failed = true;
+        meta.errors += 1;
+    }
+
     let id;
     try {
         id = assertIdentity(dev, cfg);
         lines.push('[' + label + '] 身份: uid=' + mask(id.uid, 6, 4)
             + (id.nick ? (' nick=' + id.nick) : ''));
     } catch (e) {
-        lines.push('[' + label + '] ' + (e && e.message ? e.message : e));
-        lines.push('[' + label + '] 身份不一致/读不到，本轮不执行任何写操作');
+        markFail();
+        lines.push('[' + label + '] 身份校验失败: ' + (e && e.message ? e.message : e));
+        lines.push('[' + label + '] 本轮不执行任何写操作');
+        lines.meta = meta;
         return lines;
     }
+
     const st = queryState(dev, cfg);
-    lines.push('[' + label + '] 期初: 音符=' + st.bean + ' 任务数=' + Object.keys(st.tasks).length);
+    meta.before = st.bean;
+    meta.total = Object.keys(st.tasks).length;
+    lines.push('[' + label + '] 期初: 音符=' + st.bean + ' 任务数=' + meta.total);
 
     const login = callApi(dev, cfg, 'GET', '/act-task/login-access');
-    lines.push('[' + label + '] login-access: ' + apiCode(login.data));
+    const loginCode = apiCode(login.data);
+    if (loginCode !== '000000') {
+        markFail();
+        lines.push('[' + label + '] login-access: FAIL ' + loginCode + ' ' + apiInfo(login.data));
+    } else {
+        lines.push('[' + label + '] login-access: OK');
+    }
 
     for (let i = 0; i < REPORT_TASKS.length; i += 1) {
         const tid = REPORT_TASKS[i][0];
@@ -1337,91 +1367,165 @@ function runDevice(dev, cfg, label) {
         const win = REPORT_TASKS[i][3];
         const t = st.tasks[tid] || {};
         if (Number(t.completeTime || 0) >= Number(t.needCompleteTime || 1)) {
+            meta.skips += 1;
             lines.push('[' + label + '] ' + name + ': 今日已完成,跳过');
             continue;
         }
         if (!inWindow(win)) {
+            meta.skips += 1;
             lines.push('[' + label + '] ' + name + ': 非窗口时段(' + win.join('-') + '),跳过');
             continue;
         }
+        meta.actions += 1;
         const r = callApi(dev, cfg, 'POST', '/act-task/task-report', { taskId: tid });
         const code = apiCode(r.data);
         const extra = (r.data.data && r.data.data.drawNum !== undefined)
             ? ' drawNum=' + r.data.data.drawNum : '';
-        lines.push('[' + label + '] ' + name + ': '
-            + (code === '000000' ? 'OK' : code + ' ' + apiInfo(r.data)) + extra);
+        if (code === '000000') {
+            lines.push('[' + label + '] ' + name + ': OK' + extra);
+        } else {
+            markFail();
+            lines.push('[' + label + '] ' + name + ': FAIL ' + code + ' ' + apiInfo(r.data) + extra);
+        }
     }
 
     const cmt = commentTask(dev, cfg, label);
-    for (let i = 0; i < cmt.length; i += 1) lines.push(cmt[i]);
+    for (let i = 0; i < cmt.length; i += 1) {
+        lines.push(cmt[i]);
+        if (cmt[i].indexOf('FAIL') >= 0) markFail();
+    }
 
     const top = topupSongtime(dev, cfg, label);
+    if (!top.ok) markFail();
     for (let i = 0; i < top.lines.length; i += 1) lines.push(top.lines[i]);
 
     const rec = receiveSongRewards(dev, cfg, label);
+    meta.claimed += rec.gained;
+    if (rec.failed > 0) {
+        meta.failed = true;
+        meta.errors += rec.failed;
+    }
     for (let i = 0; i < rec.lines.length; i += 1) lines.push(rec.lines[i]);
 
-    const st2 = queryState(dev, cfg);
+    let st2;
+    try {
+        st2 = queryState(dev, cfg);
+    } catch (e) {
+        markFail();
+        lines.push('[' + label + '] 期末查询失败: ' + (e && e.message ? e.message : e));
+        lines.meta = meta;
+        return lines;
+    }
+    meta.after = st2.bean;
     const ids = Object.keys(st2.tasks);
-    let done = 0;
+    meta.total = ids.length;
     for (let i = 0; i < ids.length; i += 1) {
         const t = st2.tasks[ids[i]];
-        if (Number(t.completeTime || 0) >= Number(t.needCompleteTime || 1)) done += 1;
+        if (Number(t.completeTime || 0) >= Number(t.needCompleteTime || 1)) meta.done += 1;
     }
-    const delta = (st.bean >= 0 && st2.bean >= 0) ? (' (+' + (st2.bean - st.bean) + ')') : '';
-    lines.push('[' + label + '] 期末: 音符=' + st2.bean + ' 完成=' + done + '/' + ids.length + delta);
+    const delta = (meta.before >= 0 && meta.after >= 0) ? (meta.after - meta.before) : 0;
+    lines.push('[' + label + '] 结果: 音符=' + meta.before + '→' + meta.after
+        + ' (' + (delta >= 0 ? '+' : '') + delta + ')'
+        + ' 完成=' + meta.done + '/' + meta.total
+        + ' 领取=+' + meta.claimed
+        + ' 动作=' + meta.actions
+        + ' 跳过=' + meta.skips
+        + ' 失败=' + meta.errors);
+    lines.meta = meta;
     return lines;
 }
 
 function logLines(lines) {
     for (let i = 0; i < lines.length; i += 1) {
         const line = lines[i];
-        if (/FAIL|失败|异常/.test(line)) fail(line);
+        // 注意：「daily 完成：…失败 0」不是失败；只有 FAIL/异常/身份校验失败，
+        // 或「失败 1/2…」这种非零计数才走 fail。否则成功汇总会被日志页染红。
+        const nonZeroFail = /失败\s*(?:账号|数)?\s*[=:：]?\s*[1-9]\d*/.test(line);
+        if (/FAIL|异常|身份校验失败|补报失败/.test(line) || nonZeroFail) fail(line);
         else if (/OK|领取|无需补报|已完成/.test(line)) success(line);
         else info(line);
     }
 }
 
+function updateJobSummary(text) {
+    try {
+        set_job_summary('daily', text);
+    } catch (e) {
+        warn('[mgmusic-plugin] 更新任务摘要失败: ' + (e && e.message ? e.message : e));
+    }
+}
+
 function runDaily() {
+    const started = Date.now();
     let cfg = loadConfig();
     try {
         const imported = importMacAppAccount();
         if (imported) {
             cfg = loadConfig();
             if (imported.changed) {
-                info('[' + PLUGIN + '] 已从 macOS App 同步账号 uid='
+                info('[mgmusic-plugin] 已从 macOS App 同步账号 uid='
                     + mask(imported.account.uid, 6, 4) + '（msisdn='
                     + mask(imported.account.msisdn, 3, 4) + '）');
             }
         }
     } catch (e) {
-        warn('[' + PLUGIN + '] macOS App 账号同步失败：' + (e && e.message ? e.message : e));
+        warn('[mgmusic-plugin] macOS App 账号同步失败：' + (e && e.message ? e.message : e));
     }
     if (!cfg.devices.length) {
-        const line = '[' + PLUGIN + '] 未配置 devices，跳过';
+        const line = '[mgmusic-plugin] 未配置 devices，跳过';
         warn(line);
+        updateJobSummary('未配置账号');
         return { ok: true, skipped: true, lines: [line] };
     }
-    const lines = [];
-    let failCount = 0;
+
+    const lines = ['[mgmusic-plugin] daily 开始：' + cfg.devices.length + ' 个账号'];
+    let failedDevices = 0;
+    let claimed = 0;
+    let before = -1;
+    let after = -1;
+    let done = 0;
+    let total = 0;
     for (let i = 0; i < cfg.devices.length; i += 1) {
         const dev = cfg.devices[i];
         const label = deviceLabel(dev, i);
         try {
             const part = runDevice(dev, cfg, label);
+            const meta = part.meta || {};
             for (let j = 0; j < part.length; j += 1) lines.push(part[j]);
+            if (meta.failed) failedDevices += 1;
+            claimed += Number(meta.claimed || 0);
+            if (meta.before >= 0) before = before < 0 ? meta.before : before + meta.before;
+            if (meta.after >= 0) after = after < 0 ? meta.after : after + meta.after;
+            done += Number(meta.done || 0);
+            total += Number(meta.total || 0);
         } catch (e) {
-            failCount += 1;
+            failedDevices += 1;
             lines.push('[' + label + '] FAIL ' + (e && e.message ? e.message : e));
         }
     }
+
+    const duration = Date.now() - started;
+    const summary = '[mgmusic-plugin] daily 完成：' + cfg.devices.length
+        + ' 个账号，失败 ' + failedDevices
+        + '，领取 +' + claimed
+        + '，耗时 ' + duration + 'ms';
+    lines.push(summary);
     logLines(lines);
-    if (failCount > 0) {
-        const err = new Error(failCount + '/' + cfg.devices.length + ' 个账号失败');
+
+    const beforeText = before < 0 ? '?' : String(before);
+    const afterText = after < 0 ? '?' : String(after);
+    const short = cfg.devices.length + ' 个账号 · 音符 ' + beforeText + '→' + afterText
+        + ' · 完成 ' + done + '/' + total
+        + ' · 领取 +' + claimed
+        + (failedDevices > 0 ? (' · 失败 ' + failedDevices) : '');
+    updateJobSummary(short);
+
+    if (failedDevices > 0) {
+        const err = new Error(failedDevices + '/' + cfg.devices.length + ' 个账号失败');
         err.lines = lines;
         throw err;
     }
-    return { ok: true, lines: lines };
+    return { ok: true, lines: lines, summary: short };
 }
 
 function statusAll() {
@@ -1484,11 +1588,13 @@ function commentAll() {
             lines.push('[' + label + '] 评论 FAIL ' + (e && e.message ? e.message : e));
         }
     }
+    lines.push('[mgmusic-plugin] 评论完成：' + cfg.devices.length + ' 个账号，失败 ' + failCount);
     logLines(lines);
     return { ok: failCount === 0, lines: lines };
 }
 
 function reportAll(ms) {
+    const started = Date.now();
     const cfg = loadConfig();
     if (!cfg.devices.length) throw new Error('未配置 devices');
     const lines = [];
@@ -1503,12 +1609,18 @@ function reportAll(ms) {
                 + ' ' + r.body.slice(0, 120));
             if (code !== '000000' && r.body.indexOf('000000') < 0) failCount += 1;
             const rec = receiveSongRewards(dev, cfg, label);
+            if (rec.failed > 0) failCount += rec.failed;
             for (let j = 0; j < rec.lines.length; j += 1) lines.push(rec.lines[j]);
+            lines.push('[' + label + '] 补报结果: 领取 +' + rec.gained
+                + '，失败 ' + rec.failed + '，songTime='
+                + (Number(rec.songTime || 0) / 60000).toFixed(1) + 'min');
         } catch (e) {
             failCount += 1;
             lines.push('[' + label + '] report FAIL ' + (e && e.message ? e.message : e));
         }
     }
+    lines.push('[mgmusic-plugin] 补报完成：' + cfg.devices.length + ' 个账号，失败 '
+        + failCount + '，耗时 ' + (Date.now() - started) + 'ms');
     logLines(lines);
     return { ok: failCount === 0, lines: lines };
 }

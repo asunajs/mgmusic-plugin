@@ -19,7 +19,7 @@ echo "PLUGIN_DATA_DIR = $PLUGIN_DATA_DIR"
 mkdir -p "$PLUGINS_DIR/js" "$PLUGINS_DIR/mgmusic-plugin" "$PLUGIN_DATA_DIR/mgmusic-plugin"
 
 cp "$HERE/mgmusic-plugin.js" "$PLUGINS_DIR/js/mgmusic-plugin.js"
-cp "$HERE/index.html" "$HERE/app.js" "$HERE/style.css" "$PLUGINS_DIR/mgmusic-plugin/"
+cp "$HERE/index.html" "$HERE/app.js" "$HERE/style.css" "$HERE/boot.js" "$PLUGINS_DIR/mgmusic-plugin/"
 
 # 从旧名 cmusic-plugin 迁移配置：旧数据目录不删，只复制一份。
 OLD_DATA_DIR="$PLUGIN_DATA_DIR/cmusic-plugin"
@@ -36,4 +36,4 @@ fi
 
 echo
 echo "完成。面板会在 30 秒内扫描到插件；也可以在「插件列表」里点重载。"
-echo "然后打开侧边栏「咪咕音乐」；推荐先运行 node scripts/sync-macos-account.mjs 自动导入 App 账号。"
+echo "然后打开侧边栏「咪咕音乐」，用手机号 + 短信验证码添加账号即可；macOS App 同步是可选项。"
