@@ -3,3 +3,6 @@ dist/
 config.json
 .DS_Store
 node_modules/
+
+# 本地 App 账号同步产物（含 uid/msisdn，不提交）
+app-account.json
