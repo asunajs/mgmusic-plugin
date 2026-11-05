@@ -1,0 +1,56 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>咪咕音乐</title>
+    <!-- 复用面板的 token / 组件类；插件页只引 /css/* 和自己的相对资源 -->
+    <link rel="stylesheet" href="/css/reset.css" />
+    <link rel="stylesheet" href="/css/theme.css" />
+    <link rel="stylesheet" href="/css/components.css" />
+    <link rel="stylesheet" href="style.css" />
+  </head>
+  <body>
+    <main class="page">
+      <header class="top">
+        <div>
+          <h1 class="title">咪咕音乐</h1>
+          <p class="hint">金币中心 daily / 听歌时长补报</p>
+        </div>
+        <span id="state" class="badge idle">未连接</span>
+      </header>
+
+      <section class="card">
+        <h2 class="card-title">配置</h2>
+        <p class="hint">
+          devices 数组；ce 可留空，由 uid + msisdn + deviceid 自铸。
+          配置保存在插件数据目录，不会进 /plugins/ 静态目录。
+        </p>
+        <textarea id="cfg" class="textarea" rows="18" spellcheck="false"
+          placeholder='{"devices":[...]}'></textarea>
+        <div class="row">
+          <button id="save" class="btn primary" type="button">保存配置</button>
+          <button id="template" class="btn" type="button">填入模板</button>
+          <button id="selftest" class="btn" type="button">签名自检</button>
+        </div>
+        <p id="save-hint" class="hint"></p>
+      </section>
+
+      <section class="card">
+        <h2 class="card-title">操作</h2>
+        <div class="row">
+          <button id="status" class="btn" type="button">查询状态</button>
+          <button id="run" class="btn primary" type="button">立即执行 daily</button>
+          <button id="report" class="btn" type="button">补报 10 分钟</button>
+        </div>
+        <pre id="out" class="out">（还没有输出）</pre>
+      </section>
+
+      <p class="hint">
+        daily 由面板调度：每天 00:05 / 12:05 / 22:05。听歌补报按 topup_min（默认 30 分钟），
+        上报后立刻领取已达档位。所有接口幂等，重复执行无副作用。
+      </p>
+    </main>
+    <script src="app.js"></script>
+  </body>
+</html>

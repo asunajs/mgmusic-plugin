@@ -1,0 +1,8 @@
+{
+  "devices": [],
+  "topup_min": 30,
+  "report_ms": 60000,
+  "timeout_ms": 15000,
+  "cert": "",
+  "tls": ""
+}

@@ -1,0 +1,38 @@
+name: Release
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: 校验 tag 与 package.json
+        run: |
+          set -euo pipefail
+          TAG="${GITHUB_REF_NAME}"
+          VER="$(node -p "require('./package.json').version")"
+          test "v$VER" = "$TAG" || { echo "tag=$TAG != v$VER"; exit 1; }
+
+      - name: 打包
+        run: npm run pack
+
+      - name: 发布
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          TAG="${GITHUB_REF_NAME}"
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            gh release upload "$TAG" mgmusic-plugin-*.zip dist/SHA256SUMS --clobber
+          else
+            gh release create "$TAG" mgmusic-plugin-*.zip dist/SHA256SUMS \
+              --title "mgmusic-plugin $TAG" --generate-notes
+          fi
