@@ -28,7 +28,7 @@ import {
 } from 'host-api';
 import fs from 'node:fs';
 
-const VERSION = '0.1.9';
+const VERSION = '0.2.0';
 const PLUGIN = 'mgmusic-plugin';
 const API = '/plugins/mgmusic-plugin/api';
 
@@ -68,7 +68,6 @@ const COMMENT_TASK_ID = 'c840d039adfd4c04920d92c04120baa8';
 const DEFAULTS = {
     devices: [],
     topup_min: 30,
-    readonly: false,
     app_import: {
         enabled: true, // 仅 Node 运行时生效；QuickJS 读不到 App 容器
     },
@@ -941,7 +940,7 @@ function loadConfig() {
     cfg.comment = Object.assign({}, DEFAULTS.comment,
         (raw && typeof raw.comment === 'object' && !Array.isArray(raw.comment)) ? raw.comment : {});
     cfg.topup_min = clampInt(cfg.topup_min, 0, 1440, DEFAULTS.topup_min);
-    cfg.readonly = !!cfg.readonly;
+    delete cfg.readonly; // 旧配置里的 readonly 字段直接忽略
     cfg.report_ms = clampInt(cfg.report_ms, 1000, 6 * 3600 * 1000, DEFAULTS.report_ms);
     cfg.timeout_ms = clampInt(cfg.timeout_ms, 1000, 60000, DEFAULTS.timeout_ms);
     cfg.cert = typeof cfg.cert === 'string' ? cfg.cert.trim() : '';
@@ -1329,18 +1328,6 @@ function runDevice(dev, cfg, label) {
     const st = queryState(dev, cfg);
     lines.push('[' + label + '] 期初: 音符=' + st.bean + ' 任务数=' + Object.keys(st.tasks).length);
 
-    if (cfg.readonly) {
-        const ids = Object.keys(st.tasks);
-        let done = 0;
-        for (let i = 0; i < ids.length; i += 1) {
-            const t = st.tasks[ids[i]];
-            if (Number(t.completeTime || 0) >= Number(t.needCompleteTime || 1)) done += 1;
-        }
-        lines.push('[' + label + '] readonly=true，只读查询，不执行 login/task-report/领奖');
-        lines.push('[' + label + '] 完成=' + done + '/' + ids.length);
-        return lines;
-    }
-
     const login = callApi(dev, cfg, 'GET', '/act-task/login-access');
     lines.push('[' + label + '] login-access: ' + apiCode(login.data));
 
@@ -1479,9 +1466,6 @@ function statusAll() {
 
 function commentAll() {
     const cfg = loadConfig();
-    if (cfg.readonly) {
-        return { ok: true, lines: ['readonly=true，只执行查询，不评论'] };
-    }
     if (!cfg.devices.length) throw new Error('未配置 devices');
     if (!cfg.comment.enabled) throw new Error('comment.enabled=false；先在新账号抓到真实请求再开启');
     const lines = [];
@@ -1506,9 +1490,6 @@ function commentAll() {
 
 function reportAll(ms) {
     const cfg = loadConfig();
-    if (cfg.readonly) {
-        return { ok: true, lines: ['readonly=true，只执行查询，不补报/领奖'] };
-    }
     if (!cfg.devices.length) throw new Error('未配置 devices');
     const lines = [];
     let failCount = 0;
@@ -1576,7 +1557,7 @@ function validateConfig(input) {
         throw new Error('comment.extra 必须是对象');
     }
     cfg.topup_min = clampInt(cfg.topup_min, 0, 1440, DEFAULTS.topup_min);
-    cfg.readonly = !!cfg.readonly;
+    delete cfg.readonly; // 旧配置里的 readonly 字段直接忽略
     cfg.report_ms = clampInt(cfg.report_ms, 1000, 6 * 3600 * 1000, DEFAULTS.report_ms);
     cfg.timeout_ms = clampInt(cfg.timeout_ms, 1000, 60000, DEFAULTS.timeout_ms);
     cfg.cert = typeof cfg.cert === 'string' ? cfg.cert.trim() : '';

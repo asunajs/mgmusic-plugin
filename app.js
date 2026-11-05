@@ -111,9 +111,8 @@ function renderAccounts() {
   const list = $('account-list');
   list.textContent = '';
 
-  const mode = (isAdminView() && cfg.readonly) ? ' · 只读模式' : '';
   $('account-summary').textContent = devices.length
-    ? devices.length + ' 个账号' + mode
+    ? devices.length + ' 个账号'
     : '还没有账号';
   $('account-empty').hidden = devices.length > 0;
 
@@ -135,12 +134,6 @@ function renderAccounts() {
     source.textContent = sourceLabel(dev);
     title.appendChild(source);
 
-    if (isAdminView() && cfg.readonly) {
-      const ro = document.createElement('span');
-      ro.className = 'badge soft';
-      ro.textContent = '只读';
-      title.appendChild(ro);
-    }
     main.appendChild(title);
 
     const meta = document.createElement('div');
@@ -187,7 +180,6 @@ function renderAccounts() {
 
 function fillSettings() {
   const cfg = S.config || {};
-  $('set-readonly').checked = !!cfg.readonly;
   $('set-topup').value = cfg.topup_min === undefined ? 30 : cfg.topup_min;
   $('set-app-import').checked = !!(cfg.app_import && cfg.app_import.enabled);
   $('set-timeout').value = cfg.timeout_ms === undefined ? 15000 : cfg.timeout_ms;
@@ -203,18 +195,6 @@ function fillSettings() {
 function renderAll() {
   renderAccounts();
   fillSettings();
-  const readonly = !!(S.config && S.config.readonly);
-  const report = $('report');
-  if (report) {
-    report.disabled = readonly;
-    report.title = readonly ? '只读模式下不会补报/领奖' : '';
-  }
-  const runHint = $('run-hint');
-  if (runHint) {
-    runHint.textContent = readonly
-      ? '当前是维护者开启的只读模式：只查询，不签到、不上报、不领奖。'
-      : '执行登录、任务上报和领奖；结果会显示在下面。';
-  }
 }
 
 function isAdminView() {
@@ -397,13 +377,6 @@ async function removeAccount(index) {
 
 async function saveSettings() {
   const cfg = clone(S.config || {});
-  const wasReadonly = !!cfg.readonly;
-  const nextReadonly = !!$('set-readonly').checked;
-  if (wasReadonly && !nextReadonly && !window.confirm(
-    '关闭只读模式后，daily/补报会真正上报任务并领取奖励。确定关闭？')) {
-    return;
-  }
-  cfg.readonly = nextReadonly;
   cfg.topup_min = clampInt($('set-topup').value, 0, 1440, 30);
   cfg.app_import = Object.assign({}, cfg.app_import, { enabled: !!$('set-app-import').checked });
   cfg.timeout_ms = clampInt($('set-timeout').value, 1000, 60000, 15000);
