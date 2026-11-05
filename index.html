@@ -15,10 +15,29 @@
       <header class="top">
         <div>
           <h1 class="title">咪咕音乐</h1>
-          <p class="hint">金币中心 daily / 听歌时长补报 / 评论（实验性）</p>
+          <p class="hint">短信登录自动凭证 / 金币中心 daily / 听歌补报 / 评论（实验性）</p>
         </div>
         <span id="state" class="badge idle">未连接</span>
       </header>
+
+      <section class="card">
+        <h2 class="card-title">短信登录（自动获取凭证）</h2>
+        <p class="hint">
+          输入手机号 → 发送验证码 → 填 6 位码。登录成功后自动写入下面的 devices，
+          不再需要手动抓包或填 uid/deviceid/ce。
+        </p>
+        <div class="row">
+          <input id="login-phone" class="input" type="tel" inputmode="numeric"
+            maxlength="11" placeholder="手机号" autocomplete="tel" />
+          <button id="send-code" class="btn" type="button">发送验证码</button>
+        </div>
+        <div class="row">
+          <input id="login-code" class="input" type="text" inputmode="numeric"
+            maxlength="6" placeholder="6 位验证码" autocomplete="one-time-code" />
+          <button id="login" class="btn primary" type="button">登录并保存</button>
+        </div>
+        <p id="login-hint" class="hint"></p>
+      </section>
 
       <section class="card">
         <h2 class="card-title">配置</h2>

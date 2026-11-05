@@ -28,7 +28,7 @@ import {
 } from 'host-api';
 import fs from 'node:fs';
 
-const VERSION = '0.1.2';
+const VERSION = '0.1.3';
 const PLUGIN = 'mgmusic-plugin';
 const API = '/plugins/mgmusic-plugin/api';
 
@@ -37,6 +37,11 @@ const ACTIVITY = 'MAC_KF_CBH_JBZX';
 const REFERER = 'https://h5.nf.migu.cn/app/v4/n/gold-coin-center/index.html';
 const UA = 'Mozilla/5.0 (iPad; CPU OS 18_7 like Mac OS X) AppleWebKit/605.1.15 '
     + '(KHTML, like Gecko) Mobile/15E148 migumobilemusic/8.9.4';
+
+const PASSPORT = 'https://passport.migu.cn';
+const LOGIN_PAGE = 'https://passport.migu.cn/login?sourceid=100001&apptype=0&authType=MiguPassport&display=web&logintype=1';
+const LOGIN_UA = 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 '
+    + '(KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36';
 
 const SD_PATH = '/act-message/report/song-duration/v1';
 const SD_UA = 'Mozilla/5.0 (Linux; U; Android 16; zh-cn; M2102K1C Build/SKQ1.211006.001) AppleWebKit/537.36 '
@@ -327,6 +332,400 @@ function uuidV4() {
         }
     }
     return s;
+}
+
+
+// ──────────────────────────────────────────────────────────── 短信登录（passport 网页版）
+
+let lastLoginSendAt = 0;
+
+const B64 = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/';
+
+function base64Bytes(bytes) {
+    let out = '';
+    for (let i = 0; i < bytes.length; i += 3) {
+        const b0 = bytes[i];
+        const b1 = i + 1 < bytes.length ? bytes[i + 1] : 0;
+        const b2 = i + 2 < bytes.length ? bytes[i + 2] : 0;
+        out += B64.charAt(b0 >> 2);
+        out += B64.charAt(((b0 & 3) << 4) | (b1 >> 4));
+        out += i + 1 < bytes.length ? B64.charAt(((b1 & 15) << 2) | (b2 >> 6)) : '=';
+        out += i + 2 < bytes.length ? B64.charAt(b2 & 63) : '=';
+    }
+    return out;
+}
+
+function modPow(base, exp, mod) {
+    let r = 1n;
+    let b = base % mod;
+    let e = exp;
+    while (e > 0n) {
+        if ((e & 1n) === 1n) r = (r * b) % mod;
+        b = (b * b) % mod;
+        e >>= 1n;
+    }
+    return r;
+}
+
+/** RSA PKCS#1 v1.5 公钥加密；passport 网页登录用它加密手机号和验证码。 */
+function rsaEncrypt(text, modulusHex, exponentHex) {
+    let hex = String(modulusHex || '').replace(/^0x/i, '').replace(/\s+/g, '');
+    if (hex.length % 2 === 1) hex = '0' + hex;
+    // modulus 是 1024-bit，JSON 里常带一个符号位 00；去掉它才是真正的 k=128
+    if (hex.length > 256 && hex.slice(0, 2) === '00') hex = hex.slice(2);
+    const k = hex.length / 2;
+    if (k < 64 || k > 512) throw new Error('passport 公钥长度异常: ' + hex.length);
+    const n = BigInt('0x' + hex);
+    const e = BigInt('0x' + String(exponentHex || '010001'));
+    const msg = utf8(String(text));
+    if (msg.length > k - 11) throw new Error('RSA 明文过长');
+    const em = new Uint8Array(k);
+    em[0] = 0;
+    em[1] = 2;
+    let pos = 2;
+    while (pos < k - msg.length - 1) {
+        let b = 0;
+        while (b === 0) b = Math.floor(Math.random() * 256);
+        em[pos] = b;
+        pos += 1;
+    }
+    em[pos] = 0;
+    pos += 1;
+    for (let i = 0; i < msg.length; i += 1) em[pos + i] = msg[i];
+    let m = 0n;
+    for (let i = 0; i < em.length; i += 1) m = (m << 8n) + BigInt(em[i]);
+    let c = modPow(m, e, n);
+    const out = new Uint8Array(k);
+    for (let i = k - 1; i >= 0; i -= 1) {
+        out[i] = Number(c & 255n);
+        c >>= 8n;
+    }
+    return base64Bytes(out);
+}
+
+function loginHeaders(extra) {
+    return Object.assign({
+        'user-agent': LOGIN_UA,
+        accept: 'application/json, text/javascript, */*; q=0.01',
+        'accept-language': 'zh-CN,zh;q=0.9',
+        'accept-encoding': 'identity',
+        referer: LOGIN_PAGE,
+        origin: 'https://passport.migu.cn',
+        'x-requested-with': 'XMLHttpRequest',
+    }, extra || {});
+}
+
+function passportFetch(method, path, body, extra) {
+    return fetchRaw(method, PASSPORT + path, loginHeaders(extra), body,
+        { timeout_ms: 15000, tls: '' });
+}
+
+function setCookieHeader(res) {
+    const h = (res && res.headers) || {};
+    let raw = h['set-cookie'] || h['Set-Cookie'] || '';
+    if (Array.isArray(raw)) raw = raw.join('\n');
+    if (typeof raw !== 'string' || !raw) return '';
+    const out = [];
+    const parts = raw.split(/\n|,(?=\s*[A-Za-z0-9_-]+=)/);
+    for (let i = 0; i < parts.length; i += 1) {
+        const m = parts[i].match(/^\s*([^=;,\s]+)=([^;\n,]*)/);
+        if (m && !/^(path|expires|max-age|domain|secure|httponly|samesite)$/i.test(m[1])) {
+            out.push(m[1] + '=' + m[2]);
+        }
+    }
+    return out.join('; ');
+}
+
+function mergeCookies() {
+    const map = {};
+    for (let i = 0; i < arguments.length; i += 1) {
+        const raw = String(arguments[i] || '');
+        const parts = raw.split(';');
+        for (let j = 0; j < parts.length; j += 1) {
+            const m = parts[j].match(/^\s*([^=;\s]+)=([\s\S]*)$/);
+            if (m && m[1] && !/^(path|expires|max-age|domain|secure|httponly|samesite)$/i.test(m[1])) {
+                map[m[1]] = m[2];
+            }
+        }
+    }
+    return Object.keys(map).map(function (k) { return k + '=' + map[k]; }).join('; ');
+}
+
+function findUid(obj, depth) {
+    if (obj === null || obj === undefined || depth > 6) return '';
+    if (Array.isArray(obj)) {
+        for (let i = 0; i < obj.length; i += 1) {
+            const u = findUid(obj[i], depth + 1);
+            if (u) return u;
+        }
+        return '';
+    }
+    if (typeof obj !== 'object') return '';
+    const keys = Object.keys(obj);
+    for (let i = 0; i < keys.length; i += 1) {
+        const k = keys[i];
+        if (/^(uid|userId|user_id|passportUid|accountId)$/i.test(k)) {
+            const v = obj[k];
+            if (typeof v === 'string' || typeof v === 'number') {
+                const s = String(v).trim();
+                if (s.length >= 6 && s.length <= 128) return s;
+            }
+        }
+    }
+    for (let i = 0; i < keys.length; i += 1) {
+        const u = findUid(obj[keys[i]], depth + 1);
+        if (u) return u;
+    }
+    return '';
+}
+
+function uidFromText(text) {
+    const s = String(text || '');
+    const pats = [
+        /"uid"\s*:\s*"([^"]+)"/i,
+        /"userId"\s*:\s*"([^"]+)"/i,
+        /[?&]uid=([^&"'\s]+)/i,
+        /\buid\s*[:=]\s*['"]([^'"]+)['"]/i,
+    ];
+    for (let i = 0; i < pats.length; i += 1) {
+        const m = s.match(pats[i]);
+        if (m && m[1]) {
+            let v = m[1];
+            try { v = decodeURIComponent(v); } catch (e) { /* ignore */ }
+            if (v.length >= 6 && v.length <= 128) return v;
+        }
+    }
+    return '';
+}
+
+function uidFromCookies(cookie) {
+    const parts = String(cookie || '').split(';');
+    for (let i = 0; i < parts.length; i += 1) {
+        const m = parts[i].match(/^\s*(uid|userId|user_id)\s*=\s*([^;]+)$/i);
+        if (m && m[2]) {
+            let v = m[2].trim();
+            try { v = decodeURIComponent(v); } catch (e) { /* ignore */ }
+            if (v.length >= 6 && v.length <= 128) return v;
+        }
+    }
+    return '';
+}
+
+function loginPublicKey() {
+    const r = passportFetch('POST', '/password/publickey', '',
+        { 'content-type': 'application/x-www-form-urlencoded; charset=UTF-8' });
+    const d = parseJsonSafe(r.body) || {};
+    if (Number(d.status) !== 2000 || !d.result || !d.result.modulus) {
+        throw new Error('获取 passport 公钥失败: HTTP ' + r.status + ' status=' + d.status
+            + ' ' + (d.message || ''));
+    }
+    return {
+        modulus: String(d.result.modulus),
+        exponent: String(d.result.publicExponent || '010001'),
+        cookie: setCookieHeader(r),
+    };
+}
+
+function sendLoginCode(msisdn) {
+    const phone = String(msisdn || '').trim();
+    if (!/^1[3-9]\d{9}$/.test(phone)) throw new Error('手机号格式不对');
+    const now = Date.now();
+    if (lastLoginSendAt && now - lastLoginSendAt < 60000) {
+        throw new Error('发码太频繁，请 60 秒后再试');
+    }
+    lastLoginSendAt = now;
+    const key = loginPublicKey();
+    const enc = rsaEncrypt(phone, key.modulus, key.exponent);
+    const qs = [
+        'msisdn=' + encodeURIComponent(enc),
+        'captcha=',
+        'sourceID=100001',
+        'imgcodeType=',
+        'fingerPrint=',
+        'fingerPrintDetail=',
+        'isAsync=true',
+        '_=' + now,
+    ].join('&');
+    const r = passportFetch('GET', '/login/dynamicpassword?' + qs, undefined, {});
+    const d = parseJsonSafe(r.body) || {};
+    if (Number(d.status) !== 2000) {
+        throw new Error('发码失败: ' + (d.message || ('status=' + d.status)));
+    }
+    return {
+        ok: true,
+        message: d.message || '验证码已发送，请查收短信',
+        cookie: mergeCookies(key.cookie, setCookieHeader(r)),
+    };
+}
+
+function probeLoginUser(token, cookie) {
+    const paths = [
+        '/portal/user/info?token=' + encodeURIComponent(token),
+        '/portal/userinfo?token=' + encodeURIComponent(token),
+        '/portal/user/getUserInfo?token=' + encodeURIComponent(token),
+        '/user/nav?sourceid=100001&token=' + encodeURIComponent(token),
+    ];
+    for (let i = 0; i < paths.length; i += 1) {
+        try {
+            const r = passportFetch('GET', paths[i], undefined, {
+                cookie: cookie || '',
+                accept: 'application/json, text/html, */*; q=0.01',
+            });
+            const d = parseJsonSafe(r.body);
+            let uid = d ? findUid(d, 0) : '';
+            if (!uid) uid = uidFromText(r.body);
+            if (uid) return { uid: uid, cookie: mergeCookies(cookie, setCookieHeader(r)) };
+        } catch (e) {
+            // 探测接口失败不阻断登录；最终由 uid 是否存在决定
+        }
+    }
+    return null;
+}
+
+function fetchH5Cookies(cookie) {
+    try {
+        const r = fetchRaw('GET', REFERER, {
+            'user-agent': UA,
+            accept: 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+            'accept-language': 'zh-CN,zh-Hans;q=0.9',
+            'accept-encoding': 'identity',
+            cookie: cookie || '',
+        }, undefined, { timeout_ms: 15000, tls: '' });
+        return {
+            cookie: setCookieHeader(r),
+            uid: uidFromText(r.body),
+        };
+    } catch (e) {
+        return { cookie: '', uid: '' };
+    }
+}
+
+function saveLoginDevice(msisdn, uid, deviceid, ce, cookie) {
+    const cfg = loadConfig();
+    let idx = -1;
+    for (let i = 0; i < cfg.devices.length; i += 1) {
+        if (String(cfg.devices[i].msisdn || '') === String(msisdn)) {
+            idx = i;
+            break;
+        }
+    }
+    const label = 'migu-' + String(msisdn).slice(-4);
+    if (idx < 0) {
+        cfg.devices.push({
+            label: label,
+            msisdn: String(msisdn),
+            uid: String(uid),
+            deviceid: String(deviceid),
+            ce: String(ce),
+            cookie: String(cookie || ''),
+            topup_min: cfg.topup_min,
+        });
+        idx = cfg.devices.length - 1;
+    } else {
+        cfg.devices[idx].label = cfg.devices[idx].label || label;
+        cfg.devices[idx].msisdn = String(msisdn);
+        cfg.devices[idx].uid = String(uid);
+        cfg.devices[idx].deviceid = String(deviceid);
+        cfg.devices[idx].ce = String(ce);
+        cfg.devices[idx].cookie = String(cookie || '');
+    }
+    return saveConfig(cfg);
+}
+
+function followLoginRedirect(redirectURL, token, cookie) {
+    const raw = String(redirectURL || '').trim();
+    if (!/^https?:\/\//i.test(raw)) return { cookie: cookie, uid: '', body: '' };
+    const sep = raw.indexOf('?') >= 0 ? '&' : '?';
+    const url = raw + sep + 'callbackURL=&relayState=&token=' + encodeURIComponent(token || '')
+        + '&logintype=SMS_CODE';
+    try {
+        const r = fetchRaw('GET', url, loginHeaders({
+            cookie: cookie || '',
+            accept: 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+        }), undefined, { timeout_ms: 15000, tls: '' });
+        return {
+            cookie: mergeCookies(cookie, setCookieHeader(r)),
+            uid: uidFromText(r.body) || uidFromText(url),
+            body: r.body || '',
+        };
+    } catch (e) {
+        return { cookie: cookie, uid: '', body: '' };
+    }
+}
+
+function loginWithCode(msisdn, code) {
+    const phone = String(msisdn || '').trim();
+    const sms = String(code || '').trim();
+    if (!/^1[3-9]\d{9}$/.test(phone)) throw new Error('手机号格式不对');
+    if (!/^\d{6}$/.test(sms)) throw new Error('验证码必须是 6 位数字');
+
+    const key = loginPublicKey();
+    const encPhone = rsaEncrypt(phone, key.modulus, key.exponent);
+    const encCode = rsaEncrypt(sms, key.modulus, key.exponent);
+    const body = [
+        'sourceID=100001',
+        'appType=0',
+        'relayState=',
+        'msisdn=' + encodeURIComponent(encPhone),
+        'dynamicPassword=' + encodeURIComponent(encCode),
+        'captcha=',
+        'fingerPrint=',
+        'fingerPrintDetail=',
+        'isAsync=true',
+    ].join('&');
+    const r = passportFetch('POST', '/authn/dynamicpassword', body,
+        { 'content-type': 'application/x-www-form-urlencoded; charset=UTF-8' });
+    const d = parseJsonSafe(r.body) || {};
+    if (Number(d.status) !== 2000) {
+        throw new Error('登录失败: ' + (d.message || ('status=' + d.status)));
+    }
+    const result = d.result || {};
+    const token = String(result.token || '');
+    let cookie = mergeCookies(key.cookie, setCookieHeader(r));
+    let uid = findUid(result, 0);
+    if (!uid) uid = uidFromText(result.redirectURL || '');
+    if (!uid && result.redirectURL) {
+        const followed = followLoginRedirect(result.redirectURL, token, cookie);
+        cookie = followed.cookie;
+        if (followed.uid) uid = followed.uid;
+    }
+    if (!uid && token) {
+        const info = probeLoginUser(token, cookie);
+        if (info) {
+            uid = info.uid;
+            cookie = info.cookie;
+        }
+    }
+    const h5 = fetchH5Cookies(cookie);
+    cookie = mergeCookies(cookie, h5.cookie);
+    if (!uid && h5.uid) uid = h5.uid;
+    if (!uid) uid = uidFromCookies(cookie);
+    if (!uid) {
+        const keys = (result && typeof result === 'object') ? Object.keys(result).join(',') : '';
+        throw new Error('登录成功，但没解析到 uid（返回字段：' + keys + '）；先保留这次登录结果，后面补 userinfo 接口');
+    }
+
+    const deviceid = uuidV4();
+    const ce = makeCe(String(uid), phone, deviceid);
+    const cfg = saveLoginDevice(phone, uid, deviceid, ce, cookie);
+    let dev = null;
+    for (let i = 0; i < cfg.devices.length; i += 1) {
+        if (String(cfg.devices[i].msisdn || '') === phone) {
+            dev = cfg.devices[i];
+            break;
+        }
+    }
+    const lines = ['[migu-' + phone.slice(-4) + '] 登录成功：uid='
+        + mask(uid, 6, 4) + ' deviceid=' + mask(deviceid, 8, 4)];
+    try {
+        const st = queryState(dev, cfg);
+        lines.push('[migu-' + phone.slice(-4) + '] H5 凭证测试：音符=' + st.bean
+            + ' 任务=' + Object.keys(st.tasks).length + ' 个');
+    } catch (e) {
+        lines.push('[migu-' + phone.slice(-4) + '] H5 凭证测试失败：'
+            + (e && e.message ? e.message : e));
+    }
+    return { ok: true, lines: lines, config: cfg };
 }
 
 function inWindow(win) {
@@ -942,6 +1341,16 @@ register_route(API + '/config', 'POST', route(function (req) {
     const input = body && body.config ? body.config : body;
     const cfg = saveConfig(input);
     return json(200, { ok: true, config: cfg });
+}));
+
+register_route(API + '/login/send', 'POST', route(function (req) {
+    const body = parseBody(req);
+    return json(200, sendLoginCode(body.msisdn));
+}));
+
+register_route(API + '/login/verify', 'POST', route(function (req) {
+    const body = parseBody(req);
+    return json(200, loginWithCode(body.msisdn, body.code));
 }));
 
 register_route(API + '/status', 'GET', route(function () {

@@ -56,3 +56,15 @@
   border: 1px solid var(--border-soft, #313244);
   border-radius: var(--r-md, 8px);
 }
+
+.input {
+  flex: 1 1 220px;
+  min-width: 180px;
+  box-sizing: border-box;
+  padding: 8px 10px;
+  font: inherit;
+  color: inherit;
+  background: var(--bg-deep, #11111b);
+  border: 1px solid var(--border-soft, #313244);
+  border-radius: var(--r-md, 8px);
+}

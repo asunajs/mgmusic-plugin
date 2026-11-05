@@ -133,6 +133,65 @@ async function withBusy(btn, fn) {
   }
 }
 
+function setLoginHint(kind, text) {
+  const el = $('login-hint');
+  el.className = 'hint' + (kind === 'error' ? ' err-text' : '');
+  el.textContent = text;
+}
+
+async function doSendCode() {
+  const btn = $('send-code');
+  const old = btn.textContent;
+  const msisdn = ($('login-phone').value || '').trim();
+  if (!/^1[3-9]\d{9}$/.test(msisdn)) {
+    setLoginHint('error', '先填 11 位手机号');
+    return;
+  }
+  btn.disabled = true;
+  btn.textContent = '发送中…';
+  setLoginHint('', '正在向 passport 请求验证码…');
+  try {
+    const data = await call('/login/send', { method: 'POST', body: { msisdn: msisdn } });
+    setLoginHint('', data.message || '验证码已发送');
+    $('login-code').focus();
+  } catch (e) {
+    setLoginHint('error', e.message);
+  } finally {
+    btn.disabled = false;
+    btn.textContent = old;
+  }
+}
+
+async function doLogin() {
+  const btn = $('login');
+  const old = btn.textContent;
+  const msisdn = ($('login-phone').value || '').trim();
+  const code = ($('login-code').value || '').trim();
+  if (!/^1[3-9]\d{9}$/.test(msisdn)) {
+    setLoginHint('error', '先填 11 位手机号');
+    return;
+  }
+  if (!/^\d{6}$/.test(code)) {
+    setLoginHint('error', '填 6 位短信验证码');
+    return;
+  }
+  btn.disabled = true;
+  btn.textContent = '登录中…';
+  setLoginHint('', '正在校验验证码并写入凭证…');
+  try {
+    const data = await call('/login/verify', { method: 'POST', body: { msisdn: msisdn, code: code } });
+    $('cfg').value = JSON.stringify(data.config, null, 2);
+    showLines(data.lines);
+    setLoginHint('', '登录成功，凭证已写入 devices；可以直接点「查询状态」。');
+    setState('success', '已登录');
+  } catch (e) {
+    setLoginHint('error', e.message);
+  } finally {
+    btn.disabled = false;
+    btn.textContent = old;
+  }
+}
+
 async function doStatus() {
   await withBusy($('status'), async () => {
     const data = await call('/status');
@@ -179,6 +238,8 @@ function fillTemplate() {
   $('save-hint').textContent = '模板已填入；把 uid/deviceid/msisdn 换成真机抓包值后保存。';
 }
 
+$('send-code').addEventListener('click', doSendCode);
+$('login').addEventListener('click', doLogin);
 $('save').addEventListener('click', saveConfig);
 $('template').addEventListener('click', fillTemplate);
 $('selftest').addEventListener('click', doSelftest);

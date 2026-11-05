@@ -4,6 +4,7 @@
 
 - **daily 定时任务**：每天 00:05 / 12:05 / 22:05 执行 login-access、qsq、zyd-sign、窗口打卡、听歌补报、领奖
 - **report 手动任务**：补报一次 `song-duration` 并领取已达档位
+- **短信登录**：手机号 + 验证码自动换 uid/deviceid/ce/cookie，不再手动抓包
 - **自带配置页**：设备列表、状态查询、立即执行、补报、签名自检
 
 ## 文件
@@ -24,6 +25,8 @@
 
 也可以手动下载 [`mgmusic-plugin-0.1.1.zip`](https://github.com/asunajs/mgmusic-plugin/releases/download/v0.1.1/mgmusic-plugin-0.1.1.zip)
 后在「插件管理 → 上传」里安装。
+
+> 本地开发版是 **0.1.3**（含短信登录/评论实验），尚未发布到商城；商城 Release 仍是 0.1.1。
 
 ## 安装
 
@@ -125,7 +128,28 @@ cp config.example.json "$PLUGIN_DATA_DIR/mgmusic-plugin/config.json"
 | `comment.body` | 可选；填对象则直接作为请求体，便于抓包后校准 |
 | `comment.extra` | 可选；合并进默认请求体的额外字段 |
 
-配置页里的「填入模板」会生成一份占位配置；把 `uid` / `deviceid` / `msisdn` 换成真机值后保存。
+配置页里的「填入模板」会生成一份占位配置；正常使用直接走上面的「短信登录」，不需要再手填 `uid` / `deviceid` / `ce`。
+
+## 短信登录（自动凭证）
+
+面板打开「咪咕音乐」→「短信登录」：
+
+1. 填 11 位手机号，点「发送验证码」；
+2. 收到 6 位码后填入，点「登录并保存」；
+3. 插件自动请求 passport 公钥、RSA 加密手机号/验证码、校验登录，并把
+   `uid` / `msisdn` / `deviceid` / `ce` / `cookie` 写进 `devices`。
+
+这条走的是 **passport 网页版短信登录**（`/password/publickey` +
+`/login/dynamicpassword` + `/authn/dynamicpassword`），不是 App 的 DUP SDK；
+不需要手动抓包，也不需要手填 uid/deviceid/ce。
+
+说明：
+
+- 登录成功后会自动用新凭证做一次 H5 查询；能查到音符/任务就说明凭证可用。
+- 如果提示「登录成功但没解析到 uid」，说明 passport 返回了 token，但用户信息接口还没对上；
+  把脱敏后的返回结构留下，后续补接口，不要反复发码。
+- 手机号、cookie、uid 都属于敏感信息，只写插件数据目录；不要贴到聊天/仓库。
+- 首次真实登录还没跑过；QuickJS 内已验证 passport 公钥请求 + RSA 加密（1024-bit，输出 172 字符 Base64），短信/登录接口用测试账号再验一次。
 
 ## 任务
 
