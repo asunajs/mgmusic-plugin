@@ -86,7 +86,7 @@ node scripts/sync-macos-account.mjs
 2. 调 `/v2.0/user/getMyPage.do` 做 **身份硬校验**；
 3. 服务端返回的 `userId` 与配置不一致时，**本轮拒绝任何写操作**（不会再把豆写到错账号）。
 
-> 想让账号变化后自动刷新，可把上面这条命令放进 cron / launchd（例如每 10 分钟一次）。
+> 想让账号变化后自动刷新，可把上面这条命令放进 cron（例如每 10 分钟一次）；launchd 默认没有 App 容器读取权限，若用 launchd 需给 node 完全磁盘访问。
 > 面板把插件运行时切到 **Node** 时，插件也可以直接读 App 偏好设置；QuickJS 下走 `app-account.json` 这条稳定路径。
 
 ## 配置
