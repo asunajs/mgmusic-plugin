@@ -338,6 +338,7 @@ function uuidV4() {
 // ──────────────────────────────────────────────────────────── 短信登录（passport 网页版）
 
 let lastLoginSendAt = 0;
+let pendingLogin = null;
 
 const B64 = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/';
 
@@ -743,9 +744,16 @@ function loginWithCode(msisdn, code) {
         const keys = (result && typeof result === 'object') ? Object.keys(result).join(',') : '';
         const rurl = String(result.redirectURL || '');
         const rpath = rurl.replace(/^https?:\/\/[^/]+/i, '').split('?')[0] || rurl;
+        pendingLogin = {
+            msisdn: phone, token: token, redirectURL: rurl,
+            cookie: cookie || '', at: Date.now(),
+        };
+        try {
+            fs.writeFileSync('login-pending.json', JSON.stringify(pendingLogin), 'utf8');
+        } catch (e) { /* 本地暂存失败不阻断错误返回 */ }
         throw new Error('登录成功，但没解析到 uid（字段：' + keys
             + '；redirect=' + rpath + '；tokenLen=' + token.length
-            + '）；先保留这次登录结果，后面补 userinfo 接口');
+            + '）；这次 token 已暂存在插件数据目录，不用再发码，等我补 SSO 解析');
     }
 
     const deviceid = uuidV4();
