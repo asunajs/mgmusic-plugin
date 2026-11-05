@@ -696,7 +696,9 @@ function sendLoginCode(msisdn) {
         'isAsync=true',
         '_=' + now,
     ].join('&');
-    const r = passportFetch('GET', '/login/dynamicpassword?' + qs, undefined, {});
+    const sendExtra = {};
+    if (key.cookie) sendExtra.cookie = key.cookie;
+    const r = passportFetch('GET', '/login/dynamicpassword?' + qs, undefined, sendExtra);
     const d = parseJsonSafe(r.body) || {};
     if (Number(d.status) !== 2000) {
         throw new Error('发码失败: ' + (d.message || ('status=' + d.status)));
