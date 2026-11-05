@@ -28,7 +28,7 @@ import {
 } from 'host-api';
 import fs from 'node:fs';
 
-const VERSION = '0.1.7';
+const VERSION = '0.1.8';
 const PLUGIN = 'mgmusic-plugin';
 const API = '/plugins/mgmusic-plugin/api';
 
@@ -860,8 +860,9 @@ function loginWithCode(msisdn, code) {
         'fingerPrintDetail=',
         'isAsync=true',
     ].join('&');
-    const r = passportFetch('POST', '/authn/dynamicpassword', body,
-        { 'content-type': 'application/x-www-form-urlencoded; charset=UTF-8' });
+    const authExtra = { 'content-type': 'application/x-www-form-urlencoded; charset=UTF-8' };
+    if (key.cookie) authExtra.cookie = key.cookie;
+    const r = passportFetch('POST', '/authn/dynamicpassword', body, authExtra);
     const d = parseJsonSafe(r.body) || {};
     if (Number(d.status) !== 2000) {
         throw new Error('登录失败: ' + (d.message || ('status=' + d.status)));
@@ -871,20 +872,29 @@ function loginWithCode(msisdn, code) {
     // 的 kMGLoginSDKUserInfo 取（Node 运行时）。拿不到就绝不写 uid=0。
     let uid = '';
     let imported = null;
+    const cfgNow = loadConfig();
     try {
         imported = importMacAppAccount();
         if (imported && String(imported.account.msisdn) === phone) {
             uid = String(imported.account.uid || '');
         }
-    } catch (e) { /* 导入失败就继续找响应里的 uid */ }
+    } catch (e) { /* App 导入失败不影响短信路径 */ }
+    const deviceid = (imported && String(imported.account.msisdn) === phone
+        && imported.device && imported.device.deviceid)
+        ? String(imported.device.deviceid) : uuidV4();
     if (!uid) uid = findUid(d);
     if (!uid || String(uid) === '0') {
-        throw new Error('登录成功，但没解析到真实 uid；为避免写错账号，本次不保存设备。'
-            + '请把面板运行时切到 Node，并保持 macOS App 已登录，让插件自动读取 App 账号；'
-            + '网页 passport 本身不返回 uid。');
+        // 网页 passport 只回 LTToken/USessionID，不回 uid；用手机号走 H5 身份页解析。
+        try {
+            uid = resolveUidByPhone(phone, deviceid, cfgNow);
+        } catch (e) {
+            throw new Error('登录成功，但按手机号解析真实 uid 失败：'
+                + (e && e.message ? e.message : e));
+        }
     }
-    const deviceid = (imported && imported.device && imported.device.deviceid)
-        ? String(imported.device.deviceid) : uuidV4();
+    if (!uid || String(uid) === '0') {
+        throw new Error('登录成功，但没解析到真实 uid；为避免写错账号，本次不保存设备。');
+    }
     const ce = makeCe(uid, phone, deviceid);
     const cfg = saveLoginDevice(phone, uid, deviceid, ce, '');
     let dev = null;
@@ -1197,6 +1207,28 @@ function assertIdentity(dev, cfg) {
             + '，服务端返回 uid=' + mask(id.uid, 6, 4) + '（拒绝写错账号）');
     }
     return id;
+}
+
+/**
+ * 用手机号解析真实 uid。
+ *
+ * 2026-11-05 实测：`/v2.0/user/getMyPage.do` 是按 ce 里的 msisdn 找账号，
+ * 不要求 uid 头与账号一致；因此短信登录成功后可以先用临时 uid 探测，
+ * 拿到真实 userId 后再用真实 uid 重建 ce。这样不依赖 macOS App。
+ */
+function resolveUidByPhone(phone, deviceid, cfg) {
+    const probeUid = 'probe';
+    const probe = {
+        uid: probeUid,
+        msisdn: String(phone),
+        deviceid: String(deviceid),
+        ce: makeCe(probeUid, String(phone), String(deviceid)),
+    };
+    const id = queryIdentity(probe, cfg);
+    if (!id.uid || id.uid === '0') {
+        throw new Error('按手机号解析 uid 失败：getMyPage 没返回 userId');
+    }
+    return id.uid;
 }
 
 function getSongTask(dev, cfg) {

@@ -27,7 +27,7 @@
 也可以手动下载 [`mgmusic-plugin-0.1.1.zip`](https://github.com/asunajs/mgmusic-plugin/releases/download/v0.1.1/mgmusic-plugin-0.1.1.zip)
 后在「插件管理 → 上传」里安装。
 
-> 本地开发版是 **0.1.7**（macOS App 账号同步 + 身份硬校验 + readonly，未发布到商城；商城 Release 仍是 0.1.1）。
+> 本地开发版是 **0.1.8**（短信登录按手机号解析 uid + macOS App 同步 + 身份硬校验 + readonly，未发布到商城；商城 Release 仍是 0.1.1）。
 
 ## 安装
 
@@ -70,24 +70,26 @@ cp config.example.json "$PLUGIN_DATA_DIR/mgmusic-plugin/config.json"
 `<PLUGIN_DATA_DIR>/mgmusic-plugin/config.json`，旧目录不删。装完新插件后，
 到面板「插件列表」里把旧的 `cmusic-plugin` 删掉即可。
 
-## 自动获取真实 uid（推荐）
+## 自动获取真实 uid（短信登录，默认）
 
-网页 passport 登录只返回 `LTToken` / `USessionID`，**不返回 uid**；用 `uid=0` 会被 H5 当成游客/其他账号，导致“任务显示已领、豆没到账”。0.1.7 改成从 **macOS 咪咕 App 的偏好设置**取当前登录账号：
+网页 passport 登录只返回 `LTToken` / `USessionID`，**不返回 uid**；用 `uid=0` 会被 H5 当成游客/其他账号，导致“任务显示已领、豆没到账”。0.1.8 的短信登录流程是：
+
+1. 手机号 + 验证码走 passport `/authn/dynamicpassword`，确认号码归属；
+2. 登录成功后，用 `msisdn` 生成临时 `ce` 调 `/v2.0/user/getMyPage.do`，由服务端返回真实 `userId`；
+3. 用真实 uid + msisdn + deviceid 重建 `ce` 并保存设备；
+4. 后续每次 `status` / `run` 都调 `getMyPage` 做 **身份硬校验**；服务端返回的 `userId` 与配置不一致时，**本轮拒绝任何写操作**。
+
+这条路径不依赖 macOS App，普通用户只需要手机号和短信验证码。
+
+### 可选：从已登录的 macOS App 同步
+
+本机已登录 macOS 咪咕 App 时，可以跳过短信验证码：
 
 ```bash
-# 1) 先打开 macOS 版咪咕音乐并完成登录
-# 2) 把 App 当前账号同步到插件数据根（只写 uid/msisdn/deviceid，不写 passId/token）
 node scripts/sync-macos-account.mjs
 ```
 
-生成 `<PLUGIN_DATA_DIR>/mgmusic-plugin/app-account.json` 后，插件在 `status` / `run` 时会自动导入，并：
-
-1. 用真实 uid + msisdn + deviceid 重新生成 `ce`；
-2. 调 `/v2.0/user/getMyPage.do` 做 **身份硬校验**；
-3. 服务端返回的 `userId` 与配置不一致时，**本轮拒绝任何写操作**（不会再把豆写到错账号）。
-
-> 想让账号变化后自动刷新，可把上面这条命令放进 cron（例如每 10 分钟一次）；launchd 默认没有 App 容器读取权限，若用 launchd 需给 node 完全磁盘访问。
-> 面板把插件运行时切到 **Node** 时，插件也可以直接读 App 偏好设置；QuickJS 下走 `app-account.json` 这条稳定路径。
+生成 `<PLUGIN_DATA_DIR>/mgmusic-plugin/app-account.json`（只写 uid/msisdn/deviceid，不写 passId/token），插件会自动导入。App 账号变化后重新运行一次即可；cron 可定时刷新，launchd 默认没有 App 容器读取权限，若用 launchd 需给 node 完全磁盘访问。
 
 ## 配置
 
@@ -162,8 +164,8 @@ node scripts/sync-macos-account.mjs
 1. 填 11 位手机号，点「发送验证码」；
 2. 收到 6 位码后填入，点「登录并保存」；
 3. 插件自动请求 passport 公钥、RSA 加密手机号/验证码、校验登录；
-   **必须拿到真实 uid** 才生成 `uid` / `msisdn` / `deviceid` / `ce` 写进 `devices`。
-   拿不到 uid 时只报错、不保存设备，避免写错账号。
+4. 登录成功后用手机号调 `/v2.0/user/getMyPage.do` 解析真实 uid，再用真实 uid 生成
+   `uid` / `msisdn` / `deviceid` / `ce` 写进 `devices`。拿不到真实 uid 时只报错、不保存设备。
 
 这条走的是 **passport 网页版短信登录**（`/password/publickey` +
 `/login/dynamicpassword` + `/authn/dynamicpassword`），不是 App 的 DUP SDK；
@@ -173,9 +175,10 @@ node scripts/sync-macos-account.mjs
 
 - ⚠️ 不要用 `uid=0`：2026-11-05 实测 H5 会把 `uid=0` 当游客/其他账号
   （`userId=0`，返回的 msisdn/余额都不是本人），会写错账号。
-- 金币中心 H5 的 `ce` 必须用真实 uid；`uid` 仍要从 passport SSO/userinfo 补。
+- 金币中心 H5 的 `ce` 必须用真实 uid；真实 uid 由 `getMyPage` 按手机号解析，不依赖 macOS App。
 - 登录成功后会自动用新凭证做一次 H5 查询；能查到音符/任务就说明凭证可用。
 - 短信验证码只用于确认手机号归属；手机号、uid、ce 都属于敏感信息，只写插件数据目录，不要贴到聊天/仓库。
+- 这条路径在 QuickJS 下即可跑，不需要把面板切到 Node。
 - QuickJS 内已验证 passport 公钥请求 + RSA 加密（1024-bit，输出 256 字符 hex，和网页 JS 的 RSAKey.encrypt 一致）；H5 查询用抓包 ce 变体验证过。
 
 ## 任务

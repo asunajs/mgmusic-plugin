@@ -15,7 +15,7 @@
       <header class="top">
         <div>
           <h1 class="title">咪咕音乐</h1>
-          <p class="hint">macOS App 账号同步 / 金币中心 daily / 听歌补报 / 评论（实验性）</p>
+          <p class="hint">短信登录（手机号解析 uid） / macOS App 同步 / 金币中心 daily / 听歌补报</p>
         </div>
         <span id="state" class="badge idle">未连接</span>
       </header>
@@ -23,8 +23,8 @@
       <section class="card">
         <h2 class="card-title">短信登录（自动获取凭证）</h2>
         <p class="hint">
-          网页短信登录只负责 passport 会话，不返回 uid。推荐用 <code>scripts/sync-macos-account.mjs</code> 从已登录的 macOS App 同步真实 uid；
-          插件会自动生成 H5 凭证并做身份校验。
+          短信登录成功后，插件用手机号调 H5 身份页解析真实 uid，再生成 H5 凭证并做身份校验，不再依赖 macOS App。
+          本机已登录 App 时也可以用 <code>scripts/sync-macos-account.mjs</code> 跳过验证码。
         </p>
         <div class="row">
           <input id="login-phone" class="input" type="tel" inputmode="numeric"
