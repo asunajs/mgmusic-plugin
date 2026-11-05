@@ -28,7 +28,7 @@ import {
 } from 'host-api';
 import fs from 'node:fs';
 
-const VERSION = '0.1.8';
+const VERSION = '0.1.9';
 const PLUGIN = 'mgmusic-plugin';
 const API = '/plugins/mgmusic-plugin/api';
 
@@ -1479,6 +1479,9 @@ function statusAll() {
 
 function commentAll() {
     const cfg = loadConfig();
+    if (cfg.readonly) {
+        return { ok: true, lines: ['readonly=true，只执行查询，不评论'] };
+    }
     if (!cfg.devices.length) throw new Error('未配置 devices');
     if (!cfg.comment.enabled) throw new Error('comment.enabled=false；先在新账号抓到真实请求再开启');
     const lines = [];
@@ -1503,6 +1506,9 @@ function commentAll() {
 
 function reportAll(ms) {
     const cfg = loadConfig();
+    if (cfg.readonly) {
+        return { ok: true, lines: ['readonly=true，只执行查询，不补报/领奖'] };
+    }
     if (!cfg.devices.length) throw new Error('未配置 devices');
     const lines = [];
     let failCount = 0;
