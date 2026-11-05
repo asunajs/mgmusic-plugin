@@ -15,7 +15,7 @@
       <header class="top">
         <div>
           <h1 class="title">咪咕音乐</h1>
-          <p class="hint">金币中心 daily / 听歌时长补报</p>
+          <p class="hint">金币中心 daily / 听歌时长补报 / 评论（实验性）</p>
         </div>
         <span id="state" class="badge idle">未连接</span>
       </header>
@@ -41,6 +41,7 @@
         <div class="row">
           <button id="status" class="btn" type="button">查询状态</button>
           <button id="run" class="btn primary" type="button">立即执行 daily</button>
+          <button id="comment" class="btn" type="button">评论一次（实验性）</button>
           <button id="report" class="btn" type="button">补报 10 分钟</button>
         </div>
         <pre id="out" class="out">（还没有输出）</pre>
@@ -48,7 +49,7 @@
 
       <p class="hint">
         daily 由面板调度：每天 00:05 / 12:05 / 22:05。听歌补报按 topup_min（默认 30 分钟），
-        上报后立刻领取已达档位。所有接口幂等，重复执行无副作用。
+        上报后立刻领取已达档位。评论默认关闭；开启后需先在测试账号抓一次真实评论请求校准。
       </p>
     </main>
     <script src="app.js"></script>

@@ -4,5 +4,20 @@
   "report_ms": 60000,
   "timeout_ms": 15000,
   "cert": "",
-  "tls": ""
+  "tls": "",
+  "comment": {
+    "enabled": false,
+    "song_id": "",
+    "content": "好听",
+    "resource_type": "2021",
+    "comment_info": "",
+    "target_comment_id": "",
+    "log_id": "",
+    "fk_token": "",
+    "source": "1",
+    "mode": "native",
+    "path": "/user/api/comment/add/v2.0",
+    "body": null,
+    "extra": {}
+  }
 }

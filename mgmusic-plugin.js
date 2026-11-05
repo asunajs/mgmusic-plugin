@@ -28,7 +28,7 @@ import {
 } from 'host-api';
 import fs from 'node:fs';
 
-const VERSION = '0.1.1';
+const VERSION = '0.1.2';
 const PLUGIN = 'mgmusic-plugin';
 const API = '/plugins/mgmusic-plugin/api';
 
@@ -57,6 +57,9 @@ const REPORT_TASKS = [
     ['night-check', '每日晚安打卡', 3, [22, 23]],
 ];
 
+// 「每日评论任意歌曲」任务 id；评论是 App 侧评论事件记账，不走 task-report。
+const COMMENT_TASK_ID = 'c840d039adfd4c04920d92c04120baa8';
+
 const DEFAULTS = {
     devices: [],
     topup_min: 30,
@@ -64,6 +67,21 @@ const DEFAULTS = {
     timeout_ms: 15000,
     cert: '',
     tls: '', // '' = 默认 rustls；'native' = 平台 TLS（老网关用）
+    comment: {
+        enabled: false,
+        song_id: '',
+        content: '好听',
+        resource_type: '2021',
+        comment_info: '',
+        target_comment_id: '',
+        log_id: '',
+        fk_token: '',
+        source: '1',
+        mode: 'native', // native = V005 原生头；h5 = H5 头
+        path: '/user/api/comment/add/v2.0',
+        body: null,
+        extra: {},
+    },
 };
 
 const HEX = '0123456789abcdef';
@@ -326,6 +344,8 @@ function loadConfig() {
     }
     const cfg = Object.assign({}, DEFAULTS, raw);
     if (!Array.isArray(cfg.devices)) cfg.devices = [];
+    cfg.comment = Object.assign({}, DEFAULTS.comment,
+        (raw && typeof raw.comment === 'object' && !Array.isArray(raw.comment)) ? raw.comment : {});
     cfg.topup_min = clampInt(cfg.topup_min, 0, 1440, DEFAULTS.topup_min);
     cfg.report_ms = clampInt(cfg.report_ms, 1000, 6 * 3600 * 1000, DEFAULTS.report_ms);
     cfg.timeout_ms = clampInt(cfg.timeout_ms, 1000, 60000, DEFAULTS.timeout_ms);
@@ -437,6 +457,99 @@ function reportHeaders(dev, ce, ts, sign, bodyHex) {
         timestamp: ts,
         'accept-encoding': 'identity',
     };
+}
+
+function nativeHeaders(dev, ce, ts, sign, body) {
+    const h = {
+        appid: 'music',
+        channel: '0140070',
+        subchannel: '0140070',
+        ce: ce,
+        deviceid: dev.deviceid ? String(dev.deviceid) : '',
+        uid: dev.uid ? String(dev.uid) : '',
+        imei: 'h5page',
+        imsi: 'h5page',
+        'user-agent': 'MGMobileMusic/8.9.4 (iPad; iOS 26.6; Scale/2.00)',
+        ua: 'Ios_migu',
+        version: '8.9.4',
+        platform: 'iOS',
+        os: 'iOS',
+        osversion: 'iOS 26.6',
+        brand: 'Apple',
+        pkgname: 'com.migu.migumobilemusic',
+        language: 'Chinese',
+        'accept-language': 'zh-CN,zh;q=0.9',
+        'accept-encoding': 'identity',
+        'content-type': 'application/json;charset=utf-8',
+        'content-length': String(utf8(body).length),
+        signversion: 'V005',
+        sign: sign,
+        timestamp: ts,
+    };
+    if (dev.cookie) h.cookie = String(dev.cookie);
+    return h;
+}
+
+function commentBody(dev, cfg) {
+    const c = cfg.comment || {};
+    if (c.body && typeof c.body === 'object') return JSON.stringify(c.body);
+    const obj = {
+        resourceId: String(c.song_id || ''),
+        resourceType: String(c.resource_type || '2021'),
+        userId: String(dev.uid || ''),
+        commentInfo: c.comment_info || c.content || '好听',
+        targetCommentId: String(c.target_comment_id || ''),
+        logId: String(c.log_id || ('comment-' + Date.now())),
+        fkToken: String(c.fk_token || ''),
+        source: String(c.source || '1'),
+    };
+    if (c.extra && typeof c.extra === 'object') Object.assign(obj, c.extra);
+    return JSON.stringify(obj);
+}
+
+/** 评论任务：只在 comment.enabled=true 时执行；默认关闭，未实测。 */
+function commentTask(dev, cfg, label) {
+    const c = cfg.comment || {};
+    if (!c.enabled) return [];
+    if (!c.song_id && !(c.body && typeof c.body === 'object')) {
+        return ['[' + label + '] 评论: 缺 comment.song_id，跳过'];
+    }
+    const st = queryState(dev, cfg);
+    const t = st.tasks[COMMENT_TASK_ID] || {};
+    if (Number(t.completeTime || 0) >= Number(t.needCompleteTime || 1)) {
+        return ['[' + label + '] 评论: 今日已完成,跳过'];
+    }
+
+    const ce = devCe(dev);
+    const ts = String(Date.now());
+    const body = commentBody(dev, cfg);
+    const path = c.path || DEFAULTS.comment.path;
+    let res;
+    if (c.mode === 'h5') {
+        const headers = h5Headers(dev, ce);
+        headers['content-type'] = 'application/json;charset=utf-8';
+        headers['content-length'] = String(utf8(body).length);
+        res = fetchRaw('POST', BASE + path, headers, body, cfg);
+    } else {
+        const sign = mgSign([utf8(path + ce + ts + body)], certOf(cfg));
+        res = fetchRaw('POST', BASE + path, nativeHeaders(dev, ce, ts, sign, body), body, cfg);
+    }
+    const data = parseJsonSafe(res.body) || {};
+    const code = apiCode(data);
+    const lines = ['[' + label + '] 评论: HTTP ' + res.status
+        + ' code=' + code + ' ' + (apiInfo(data) || res.body.slice(0, 120))];
+    if (code === '000000') {
+        const st2 = queryState(dev, cfg);
+        const t2 = st2.tasks[COMMENT_TASK_ID] || {};
+        if (Number(t2.completeTime || 0) >= Number(t2.needCompleteTime || 1)) {
+            lines.push('[' + label + '] 评论: OK 任务已完成');
+        } else {
+            lines.push('[' + label + '] 评论: WARN 接口成功但任务未变 1/1（可能审核/延迟，勿重复）');
+        }
+    } else {
+        lines.push('[' + label + '] 评论: FAIL ' + (apiInfo(data) || '接口未成功'));
+    }
+    return lines;
 }
 
 function callApi(dev, cfg, method, path, bodyObj) {
@@ -592,6 +705,9 @@ function runDevice(dev, cfg, label) {
             + (code === '000000' ? 'OK' : code + ' ' + apiInfo(r.data)) + extra);
     }
 
+    const cmt = commentTask(dev, cfg, label);
+    for (let i = 0; i < cmt.length; i += 1) lines.push(cmt[i]);
+
     const top = topupSongtime(dev, cfg, label);
     for (let i = 0; i < top.lines.length; i += 1) lines.push(top.lines[i]);
 
@@ -673,6 +789,30 @@ function statusAll() {
     return { ok: failCount === 0, lines: lines };
 }
 
+function commentAll() {
+    const cfg = loadConfig();
+    if (!cfg.devices.length) throw new Error('未配置 devices');
+    if (!cfg.comment.enabled) throw new Error('comment.enabled=false；先在新账号抓到真实请求再开启');
+    const lines = [];
+    let failCount = 0;
+    for (let i = 0; i < cfg.devices.length; i += 1) {
+        const dev = cfg.devices[i];
+        const label = deviceLabel(dev, i);
+        try {
+            const part = commentTask(dev, cfg, label);
+            for (let j = 0; j < part.length; j += 1) lines.push(part[j]);
+            for (let j = 0; j < part.length; j += 1) {
+                if (part[j].indexOf('FAIL') >= 0 || part[j].indexOf('WARN') >= 0) failCount += 1;
+            }
+        } catch (e) {
+            failCount += 1;
+            lines.push('[' + label + '] 评论 FAIL ' + (e && e.message ? e.message : e));
+        }
+    }
+    logLines(lines);
+    return { ok: failCount === 0, lines: lines };
+}
+
 function reportAll(ms) {
     const cfg = loadConfig();
     if (!cfg.devices.length) throw new Error('未配置 devices');
@@ -712,6 +852,30 @@ function validateConfig(input) {
     }
     const cfg = Object.assign({}, DEFAULTS, input);
     if (!Array.isArray(cfg.devices)) throw new Error('devices 必须是数组');
+    if (input.comment !== undefined && (typeof input.comment !== 'object' || Array.isArray(input.comment))) {
+        throw new Error('comment 必须是对象');
+    }
+    cfg.comment = Object.assign({}, DEFAULTS.comment, input.comment || {});
+    cfg.comment.enabled = !!cfg.comment.enabled;
+    cfg.comment.song_id = String(cfg.comment.song_id || '').trim();
+    cfg.comment.content = String(cfg.comment.content || '好听').trim() || '好听';
+    cfg.comment.resource_type = String(cfg.comment.resource_type || '2021').trim() || '2021';
+    cfg.comment.comment_info = String(cfg.comment.comment_info || '');
+    cfg.comment.target_comment_id = String(cfg.comment.target_comment_id || '');
+    cfg.comment.log_id = String(cfg.comment.log_id || '');
+    cfg.comment.fk_token = String(cfg.comment.fk_token || '');
+    cfg.comment.source = String(cfg.comment.source || '1');
+    cfg.comment.mode = cfg.comment.mode === 'h5' ? 'h5' : 'native';
+    cfg.comment.path = String(cfg.comment.path || DEFAULTS.comment.path);
+    if (cfg.comment.path.charAt(0) !== '/') throw new Error('comment.path 必须以 / 开头');
+    if (cfg.comment.body !== null && cfg.comment.body !== undefined
+        && (typeof cfg.comment.body !== 'object' || Array.isArray(cfg.comment.body))) {
+        throw new Error('comment.body 必须是对象或 null');
+    }
+    if (cfg.comment.extra !== null && cfg.comment.extra !== undefined
+        && (typeof cfg.comment.extra !== 'object' || Array.isArray(cfg.comment.extra))) {
+        throw new Error('comment.extra 必须是对象');
+    }
     cfg.topup_min = clampInt(cfg.topup_min, 0, 1440, DEFAULTS.topup_min);
     cfg.report_ms = clampInt(cfg.report_ms, 1000, 6 * 3600 * 1000, DEFAULTS.report_ms);
     cfg.timeout_ms = clampInt(cfg.timeout_ms, 1000, 60000, DEFAULTS.timeout_ms);
@@ -788,6 +952,10 @@ register_route(API + '/run', 'POST', route(function () {
     return json(200, runDaily());
 }));
 
+register_route(API + '/comment', 'POST', route(function () {
+    return json(200, commentAll());
+}));
+
 register_route(API + '/report', 'POST', route(function (req) {
     const body = parseBody(req);
     const cfg = loadConfig();
@@ -804,6 +972,12 @@ register_nav({ label: '咪咕音乐', icon: '🎵' });
 register_cron('daily', '0 5 0,12,22 * * *', function () {
     runDaily();
 }, { summary: '每日 00:05/12:05/22:05 签到 + 听歌补报' });
+
+register_handler('comment', function () {
+    const r = commentAll();
+    if (!r.ok) throw new Error('评论有失败，详见插件日志');
+    return r;
+});
 
 register_handler('report', function () {
     const cfg = loadConfig();

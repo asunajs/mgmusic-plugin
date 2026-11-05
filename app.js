@@ -22,6 +22,21 @@ const TEMPLATE = {
   timeout_ms: 15000,
   cert: '',
   tls: '',
+  comment: {
+    enabled: false,
+    song_id: '',
+    content: '好听',
+    resource_type: '2021',
+    comment_info: '',
+    target_comment_id: '',
+    log_id: '',
+    fk_token: '',
+    source: '1',
+    mode: 'native',
+    path: '/user/api/comment/add/v2.0',
+    body: null,
+    extra: {},
+  },
 };
 
 async function call(path, opts) {
@@ -134,6 +149,14 @@ async function doRun() {
   });
 }
 
+async function doComment() {
+  await withBusy($('comment'), async () => {
+    const data = await call('/comment', { method: 'POST', body: {} });
+    showLines(data.lines);
+    setState(data.ok ? 'success' : 'failed', data.ok ? '评论完成' : '评论有失败');
+  });
+}
+
 async function doReport() {
   await withBusy($('report'), async () => {
     const data = await call('/report', { method: 'POST', body: { ms: 600000 } });
@@ -161,6 +184,7 @@ $('template').addEventListener('click', fillTemplate);
 $('selftest').addEventListener('click', doSelftest);
 $('status').addEventListener('click', doStatus);
 $('run').addEventListener('click', doRun);
+$('comment').addEventListener('click', doComment);
 $('report').addEventListener('click', doReport);
 
 loadConfig();

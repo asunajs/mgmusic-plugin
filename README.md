@@ -87,7 +87,22 @@ cp config.example.json "$PLUGIN_DATA_DIR/mgmusic-plugin/config.json"
   "report_ms": 60000,
   "timeout_ms": 15000,
   "cert": "",
-  "tls": ""
+  "tls": "",
+  "comment": {
+    "enabled": false,
+    "song_id": "",
+    "content": "好听",
+    "resource_type": "2021",
+    "comment_info": "",
+    "target_comment_id": "",
+    "log_id": "",
+    "fk_token": "",
+    "source": "1",
+    "mode": "native",
+    "path": "/user/api/comment/add/v2.0",
+    "body": null,
+    "extra": {}
+  }
 }
 ```
 
@@ -101,6 +116,14 @@ cp config.example.json "$PLUGIN_DATA_DIR/mgmusic-plugin/config.json"
 | `timeout_ms` | 单次 HTTP 超时（1000–60000） |
 | `cert` | 可选；默认用内置证书 hex 前 32 字符；换证书时填完整 hex |
 | `tls` | 空 = 默认 rustls；`native` = 平台 TLS（老网关） |
+| `comment.enabled` | 默认 `false`；评论功能是实验性，未实测 |
+| `comment.song_id` | 要评论的歌曲 contentId；开启评论时必填 |
+| `comment.content` | 评论内容，默认 `好听` |
+| `comment.resource_type` | 歌曲默认 `2021` |
+| `comment.comment_info` | 可选；填了就直接作为 `commentInfo` 字段，覆盖 `content` |
+| `comment.mode` | `native` = V005 原生头；`h5` = H5 头；默认 `native` |
+| `comment.body` | 可选；填对象则直接作为请求体，便于抓包后校准 |
+| `comment.extra` | 可选；合并进默认请求体的额外字段 |
 
 配置页里的「填入模板」会生成一份占位配置；把 `uid` / `deviceid` / `msisdn` 换成真机值后保存。
 
@@ -110,6 +133,7 @@ cp config.example.json "$PLUGIN_DATA_DIR/mgmusic-plugin/config.json"
 |---|---|---|
 | `daily` | `0 5 0,12,22 * * *` | 00:05 / 12:05 / 22:05；qsq + zyd-sign + 窗口打卡 + 听歌补报 + 领奖；未配置 devices 时记一条 warn 并跳过 |
 | `report` | 手动（面板建任务或配置页按钮） | 补报一次 `song-duration`，随后领奖 |
+| `comment` | 手动「评论一次」；`daily` 里 `comment.enabled=true` 时也会执行 | 实验性；默认关闭，未实测 |
 
 协议事实（2026-10-15 实测）：
 
@@ -117,12 +141,33 @@ cp config.example.json "$PLUGIN_DATA_DIR/mgmusic-plugin/config.json"
 - 所有接口幂等，重复 report 无副作用
 - 领取/查询接口不需要 sign；`song-duration` 需要 V005 sign
 - `qsq` / `zyd-sign` 是纯上报即发币；打卡窗口外静默不记
+- **评论任务不走 `task-report`**：2026-11-05 实测评论后 `completeTime=1`，但没有 `task-report` 请求；评论是 App 侧评论事件记账
+- 评论接口按 `/user/api/comment/add/v2.0` 和 `MGFusionAddCommentDAO` 字段做了实验性实现，**尚未用真实评论请求校准**
 
 ## 验证
 
 - 签名向量 10/10（QuickJS 26ms）
 - 面板内实测：dummy 设备完成 `login-access`、qsq、zyd-sign、30 分钟补报、7 档领奖
 - 配置页「签名自检」：`mgSign("hello") = 0B646EAD2072F5A932D2F0A742BE72ED`
+
+## 评论（实验性，默认关闭）
+
+评论任务不是 `task-report` 能完成的：2026-11-05 实测评论后任务直接变 `1/1`，没有 `task-report`。
+插件按 `MGFusionAddCommentDAO` / `MGUserAddCommentNet` 的字段先做了实验性实现：
+
+```text
+POST /user/api/comment/add/v2.0
+body: { resourceId, resourceType, userId, commentInfo, targetCommentId, logId, fkToken, source }
+```
+
+默认 `comment.enabled=false`，不会自动评论。新账号测试顺序：
+
+1. 先只填 `uid/deviceid/msisdn/cookie`，保持 `comment.enabled=false`；
+2. 在 App 里手动评论一次，用 Reqable 抓真实请求（路径、body、头、响应）；
+3. 把真实请求体填进 `comment.body`，或按抓包修正字段后，再设 `comment.enabled=true`；
+4. 点「评论一次」，只点一次；如果返回非 `000000`，不要循环重试，把 HAR 留下来校准。
+
+`comment.mode` 先试 `native`；若服务端要 H5 头，再改 `h5`。`comment.body` 填对象时优先于默认字段。
 
 ## 说明 / 边界
 
