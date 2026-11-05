@@ -356,3 +356,12 @@ input[type="checkbox"],
 input[type="radio"] {
   accent-color: var(--accent, #89b4fa);
 }
+
+/* 让原生控件（数字输入框的步进器、滚动条等）也跟主题的明暗走。 */
+:root[data-theme="dark"] {
+  color-scheme: dark;
+}
+
+:root[data-theme="light"] {
+  color-scheme: light;
+}

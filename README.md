@@ -17,6 +17,9 @@
 
 uid / deviceid / ce 由短信登录或 App 同步自动维护，不需要用户手填。
 
+页面主题由 `boot.js` 跟随面板：读取同源 localStorage 的 `panel-theme-v2`，并监听 `storage` 事件；面板切深/浅色时插件页即时同步，不需要刷新。
+
+
 ## 文件
 
 | 文件 | 作用 |
