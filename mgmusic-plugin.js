@@ -34,6 +34,7 @@ const PLUGIN = 'mgmusic-plugin';
 const API = '/plugins/mgmusic-plugin/api';
 
 const BASE = 'https://app.c.nf.migu.cn';
+const COMMENT_BASE = 'https://app.pd.nf.migu.cn';
 const ACTIVITY = 'MAC_KF_CBH_JBZX';
 const REFERER = 'https://h5.nf.migu.cn/app/v4/n/gold-coin-center/index.html';
 const UA = 'Mozilla/5.0 (iPad; CPU OS 18_7 like Mac OS X) AppleWebKit/605.1.15 '
@@ -1088,15 +1089,15 @@ function nativeHeaders(dev, ce, ts, sign, body) {
 function commentBody(dev, cfg) {
     const c = cfg.comment || {};
     if (c.body && typeof c.body === 'object') return JSON.stringify(c.body);
+    // 2026-11-05 抓包：App 实际只发这五个字段，source 固定 app。
+    // fkToken 是评论风控 token；没有它服务端会回 870006。
     const obj = {
-        resourceId: String(c.song_id || ''),
+        commentInfo: String(c.comment_info || c.content || '好听'),
         resourceType: String(c.resource_type || '2021'),
+        resourceId: String(c.song_id || ''),
         userId: String(dev.uid || ''),
-        commentInfo: c.comment_info || c.content || '好听',
-        targetCommentId: String(c.target_comment_id || ''),
-        logId: String(c.log_id || ('comment-' + Date.now())),
         fkToken: String(c.fk_token || ''),
-        source: String(c.source || '1'),
+        source: 'app',
     };
     if (c.extra && typeof c.extra === 'object') Object.assign(obj, c.extra);
     return JSON.stringify(obj);
@@ -1122,12 +1123,17 @@ function commentTask(dev, cfg, label) {
     let res;
     if (c.mode === 'h5') {
         const headers = h5Headers(dev, ce);
-        headers['content-type'] = 'application/json;charset=utf-8';
+        headers['content-type'] = 'application/json';
         headers['content-length'] = String(utf8(body).length);
-        res = fetchRaw('POST', BASE + path, headers, body, cfg);
+        res = fetchRaw('POST', COMMENT_BASE + path, headers, body, cfg);
     } else {
         const sign = mgSign([utf8(path + ce + ts + body)], certOf(cfg));
-        res = fetchRaw('POST', BASE + path, nativeHeaders(dev, ce, ts, sign, body), body, cfg);
+        const headers = nativeHeaders(dev, ce, ts, sign, body);
+        headers['content-type'] = 'application/json';
+        headers.pkgname = 'iOSMigu';
+        headers.logid = 'gd@' + String(c.song_id || '') + '@90000002';
+        headers.accept = '*/*';
+        res = fetchRaw('POST', COMMENT_BASE + path, headers, body, cfg);
     }
     const data = parseJsonSafe(res.body) || {};
     const code = apiCode(data);
