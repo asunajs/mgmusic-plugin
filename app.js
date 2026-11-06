@@ -153,6 +153,16 @@ function renderAccounts() {
 
     const actions = document.createElement('div');
     actions.className = 'account-actions';
+    const sign = document.createElement('button');
+    sign.className = 'btn btn-sm';
+    sign.type = 'button';
+    sign.textContent = '签到';
+    sign.addEventListener('click', () => doSign(dev.uid, sign));
+    const comment = document.createElement('button');
+    comment.className = 'btn btn-sm';
+    comment.type = 'button';
+    comment.textContent = '评论';
+    comment.addEventListener('click', () => doComment(dev.uid, comment));
     const query = document.createElement('button');
     query.className = 'btn btn-sm';
     query.type = 'button';
@@ -168,6 +178,8 @@ function renderAccounts() {
     remove.type = 'button';
     remove.textContent = '删除';
     remove.addEventListener('click', () => removeAccount(index));
+    actions.appendChild(sign);
+    actions.appendChild(comment);
     actions.appendChild(query);
     actions.appendChild(edit);
     actions.appendChild(remove);
@@ -424,6 +436,22 @@ async function doReport() {
     const data = await call('/report', { method: 'POST', body: { ms: ms } });
     showLines(data.lines);
     setState(data.ok ? 'success' : 'failed', data.ok ? '补报完成' : '补报有失败');
+  });
+}
+
+async function doSign(uid, btn) {
+  await withBusy(btn, async () => {
+    const data = await call('/sign', { method: 'POST', body: { uid: uid } });
+    showLines(data.lines);
+    setState(data.ok ? 'success' : 'failed', data.ok ? '签到完成' : '签到有失败');
+  });
+}
+
+async function doComment(uid, btn) {
+  await withBusy(btn, async () => {
+    const data = await call('/comment', { method: 'POST', body: { uid: uid } });
+    showLines(data.lines);
+    setState(data.ok ? 'success' : 'failed', data.ok ? '评论完成' : '评论有失败');
   });
 }
 

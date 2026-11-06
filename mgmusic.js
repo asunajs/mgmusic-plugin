@@ -29,7 +29,7 @@ import {
 } from 'host-api';
 import fs from 'node:fs';
 
-const VERSION = '0.3.0';
+const VERSION = '0.3.1';
 const PLUGIN = 'mgmusic';
 const API = '/plugins/mgmusic/api';
 
@@ -78,16 +78,16 @@ const DEFAULTS = {
     cert: '',
     tls: '', // '' = 默认 rustls；'native' = 平台 TLS（老网关用）
     comment: {
-        enabled: false,
-        song_id: '',
+        enabled: true,
+        song_id: '600929000006498997',
         content: '好听',
-        resource_type: '2021',
+        resource_type: '2',
         comment_info: '',
         target_comment_id: '',
         log_id: '',
         fk_token: '',
         source: 'app',
-        mode: 'native', // native = V005 原生头；h5 = H5 头
+        mode: 'android', // android = Android V005 头（实测可评论）；ios = iOS 头；h5 = H5 头
         path: '/user/api/comment/add/v2.0',
         body: null,
         extra: {},
@@ -1086,11 +1086,44 @@ function nativeHeaders(dev, ce, ts, sign, body) {
     return h;
 }
 
+/** Android App 的评论头；插件内置 mgSign 是 Android V005，实测可发评论。 */
+function androidCommentHeaders(dev, ce, ts, sign, body, resourceId) {
+    const h = {
+        appid: 'music',
+        language: 'zh-Hans-CN',
+        'user-agent': 'MGMobileMusic/8.9.4 (Linux; Android 16)',
+        signversion: 'V005',
+        randomsessionkey: '1',
+        brand: 'OnePlus',
+        channel: '0147151',
+        ua: 'Android_migu',
+        version: '8.9.3',
+        os: 'Android',
+        platform: 'Android',
+        subchannel: '0147151',
+        pkgname: 'cmccwm.mobilemusic',
+        'accept-language': 'zh-Hans-CN;q=1',
+        timestamp: ts,
+        sign: sign,
+        accept: '*/*',
+        'content-type': 'application/json',
+        'accept-encoding': 'identity',
+        recommendstatus: '1',
+        mode: 'android',
+        ce: ce,
+        uid: dev.uid ? String(dev.uid) : '',
+        logid: 'gd@' + String(resourceId || '') + '@90000002',
+        'content-length': String(utf8(body).length),
+    };
+    if (dev.cookie) h.cookie = String(dev.cookie);
+    return h;
+}
+
 function commentBody(dev, cfg) {
     const c = cfg.comment || {};
     if (c.body && typeof c.body === 'object') return JSON.stringify(c.body);
     // 2026-11-05 抓包：App 实际只发这五个字段，source 固定 app。
-    // fkToken 是评论风控 token；没有它服务端会回 870006。
+    // Android 头实测 fkToken 可空；iOS 头仍需要 App 生成的 fkToken。
     const obj = {
         commentInfo: String(c.comment_info || c.content || '好听'),
         resourceType: String(c.resource_type || '2021'),
@@ -1106,13 +1139,17 @@ function commentBody(dev, cfg) {
 /** 评论任务：只在 comment.enabled=true 时执行；默认关闭，未实测。 */
 function commentTask(dev, cfg, label) {
     const c = cfg.comment || {};
-    if (!c.enabled) return [];
+    const st = queryState(dev, cfg);
+    const t = st.tasks[COMMENT_TASK_ID] || {};
+    const done = Number(t.completeTime || 0) >= Number(t.needCompleteTime || 1);
+    if (!c.enabled) {
+        return ['[' + label + '] 评论: 未开启（任务 '
+            + Number(t.completeTime || 0) + '/' + Number(t.needCompleteTime || 1) + '），跳过'];
+    }
     if (!c.song_id && !(c.body && typeof c.body === 'object')) {
         return ['[' + label + '] 评论: 缺 comment.song_id，跳过'];
     }
-    const st = queryState(dev, cfg);
-    const t = st.tasks[COMMENT_TASK_ID] || {};
-    if (Number(t.completeTime || 0) >= Number(t.needCompleteTime || 1)) {
+    if (done) {
         return ['[' + label + '] 评论: 今日已完成,跳过'];
     }
 
@@ -1126,13 +1163,19 @@ function commentTask(dev, cfg, label) {
         headers['content-type'] = 'application/json';
         headers['content-length'] = String(utf8(body).length);
         res = fetchRaw('POST', COMMENT_BASE + path, headers, body, cfg);
-    } else {
+    } else if (c.mode === 'ios') {
         const sign = mgSign([utf8(path + ce + ts + body)], certOf(cfg));
         const headers = nativeHeaders(dev, ce, ts, sign, body);
         headers['content-type'] = 'application/json';
         headers.pkgname = 'iOSMigu';
         headers.logid = 'gd@' + String(c.song_id || '') + '@90000002';
         headers.accept = '*/*';
+        res = fetchRaw('POST', COMMENT_BASE + path, headers, body, cfg);
+    } else {
+        // 2026-11-06 实测：Android 头 + mgSign(path+ce+ts+body) 可发评论；
+        // fkToken 可以留空，服务端仍回 000000，任务随即 1/1。
+        const sign = mgSign([utf8(path + ce + ts + body)], certOf(cfg));
+        const headers = androidCommentHeaders(dev, ce, ts, sign, body, c.song_id);
         res = fetchRaw('POST', COMMENT_BASE + path, headers, body, cfg);
     }
     const data = parseJsonSafe(res.body) || {};
@@ -1194,6 +1237,54 @@ function queryState(dev, cfg) {
     const bean = (beanData.data && beanData.data.availableNum !== undefined)
         ? Number(beanData.data.availableNum) : -1;
     return { tasks: tasks, bean: bean };
+}
+
+/** 金币中心签到状态；签到不是 task-report，独立接口 /act-jbzx/sign。 */
+function querySignState(dev, cfg) {
+    const r = ensureOk(callApi(dev, cfg, 'GET', '/act-jbzx/sign/status'), 'sign-status');
+    return r.data || {};
+}
+
+/**
+ * 每日签到。已签直接跳过；未签才 POST /act-jbzx/sign。
+ * 2026-11-06 实测：2716 账号返回 isSign=true、signNum=2；再 POST 回 200001“今天已签到”。
+ */
+function signTask(dev, cfg, label) {
+    const lines = [];
+    let before;
+    try {
+        before = querySignState(dev, cfg);
+    } catch (e) {
+        return { ok: false, lines: ['[' + label + '] 签到: 查询失败 ' + (e && e.message ? e.message : e)] };
+    }
+    const num = Number(before.signNum || 0);
+    if (before.isSign) {
+        return {
+            ok: true,
+            skipped: true,
+            lines: ['[' + label + '] 签到: 今日已签（第' + (num || 1) + '天），跳过'],
+        };
+    }
+    const r = callApi(dev, cfg, 'POST', '/act-jbzx/sign');
+    const code = apiCode(r.data);
+    if (code === '000000') {
+        lines.push('[' + label + '] 签到: OK' + (r.data && r.data.data && r.data.data.scoreNum !== undefined
+            ? ' +' + r.data.data.scoreNum : ''));
+    } else if (code === '200001') {
+        lines.push('[' + label + '] 签到: 今日已签，跳过');
+    } else {
+        return { ok: false, lines: ['[' + label + '] 签到: FAIL ' + code + ' ' + apiInfo(r.data)] };
+    }
+    try {
+        const after = querySignState(dev, cfg);
+        if (after.isSign) {
+            lines.push('[' + label + '] 签到: 已确认（第' + Number(after.signNum || num + 1) + '天）');
+        }
+    } catch (e) {
+        // 写成功但回读失败时不要误报失败
+        lines.push('[' + label + '] 签到: 回读失败 ' + (e && e.message ? e.message : e));
+    }
+    return { ok: true, action: code === '000000', skipped: code === '200001', lines: lines };
 }
 
 /** 读 H5 当前登录身份；这是防“uid/ce 对不上却照写”的硬校验。 */
@@ -1332,6 +1423,7 @@ function runDevice(dev, cfg, label) {
         done: 0,
         total: 0,
         claimed: 0,
+        signed: 0,
         actions: 0,
         skips: 0,
     };
@@ -1366,6 +1458,12 @@ function runDevice(dev, cfg, label) {
     } else {
         lines.push('[' + label + '] login-access: OK');
     }
+
+    const sg = signTask(dev, cfg, label);
+    for (let j = 0; j < sg.lines.length; j += 1) lines.push(sg.lines[j]);
+    if (!sg.ok) markFail();
+    else if (sg.action) { meta.actions += 1; meta.signed += 1; }
+    else if (sg.skipped) meta.skips += 1;
 
     for (let i = 0; i < REPORT_TASKS.length; i += 1) {
         const tid = REPORT_TASKS[i][0];
@@ -1487,6 +1585,7 @@ function runDaily() {
     const lines = ['[mgmusic] daily 开始：' + cfg.devices.length + ' 个账号'];
     let failedDevices = 0;
     let claimed = 0;
+    let signed = 0;
     let before = -1;
     let after = -1;
     let done = 0;
@@ -1500,6 +1599,7 @@ function runDaily() {
             for (let j = 0; j < part.length; j += 1) lines.push(part[j]);
             if (meta.failed) failedDevices += 1;
             claimed += Number(meta.claimed || 0);
+            signed += Number(meta.signed || 0);
             if (meta.before >= 0) before = before < 0 ? meta.before : before + meta.before;
             if (meta.after >= 0) after = after < 0 ? meta.after : after + meta.after;
             done += Number(meta.done || 0);
@@ -1513,6 +1613,7 @@ function runDaily() {
     const duration = Date.now() - started;
     const summary = '[mgmusic] daily 完成：' + cfg.devices.length
         + ' 个账号，失败 ' + failedDevices
+        + '，签到 +' + signed
         + '，领取 +' + claimed
         + '，耗时 ' + duration + 'ms';
     lines.push(summary);
@@ -1559,6 +1660,13 @@ function statusAll() {
                 + (id.nick ? (' nick=' + id.nick) : ''));
             const st = queryState(dev, cfg);
             lines.push('[' + label + '] 音符=' + st.bean + ' ce=' + mask(devCe(dev), 8, 4));
+            try {
+                const sg = querySignState(dev, cfg);
+                lines.push('  签到: ' + (sg.isSign ? '今日已签' : '今日未签')
+                    + '（第' + Number(sg.signNum || 0) + '天）');
+            } catch (e) {
+                lines.push('  签到: 查询失败 ' + (e && e.message ? e.message : e));
+            }
             const ids = Object.keys(st.tasks);
             for (let j = 0; j < ids.length; j += 1) {
                 const t = st.tasks[ids[j]];
@@ -1574,14 +1682,47 @@ function statusAll() {
     return { ok: failCount === 0, lines: lines };
 }
 
-function commentAll() {
+function pickDevices(cfg, uid) {
+    if (!uid) return cfg.devices;
+    return cfg.devices.filter(function (d) { return String(d.uid || '') === String(uid); });
+}
+
+function signAll(uid) {
     const cfg = loadConfig();
     if (!cfg.devices.length) throw new Error('未配置 devices');
-    if (!cfg.comment.enabled) throw new Error('comment.enabled=false；先在新账号抓到真实请求再开启');
+    const devices = pickDevices(cfg, uid);
+    if (!devices.length) throw new Error('没有匹配 uid 的账号');
     const lines = [];
     let failCount = 0;
-    for (let i = 0; i < cfg.devices.length; i += 1) {
-        const dev = cfg.devices[i];
+    let signed = 0;
+    for (let i = 0; i < devices.length; i += 1) {
+        const dev = devices[i];
+        const label = deviceLabel(dev, i);
+        try {
+            const r = signTask(dev, cfg, label);
+            for (let j = 0; j < r.lines.length; j += 1) lines.push(r.lines[j]);
+            if (!r.ok) failCount += 1;
+            if (r.action) signed += 1;
+        } catch (e) {
+            failCount += 1;
+            lines.push('[' + label + '] 签到 FAIL ' + (e && e.message ? e.message : e));
+        }
+    }
+    lines.push('[mgmusic] 签到完成：' + devices.length + ' 个账号，签到 +' + signed + '，失败 ' + failCount);
+    logLines(lines);
+    return { ok: failCount === 0, lines: lines };
+}
+
+function commentAll(uid) {
+    const cfg = loadConfig();
+    if (!cfg.devices.length) throw new Error('未配置 devices');
+    if (!cfg.comment.enabled) throw new Error('comment.enabled=false；在管理设置里开启评论');
+    const devices = pickDevices(cfg, uid);
+    if (!devices.length) throw new Error('没有匹配 uid 的账号');
+    const lines = [];
+    let failCount = 0;
+    for (let i = 0; i < devices.length; i += 1) {
+        const dev = devices[i];
         const label = deviceLabel(dev, i);
         try {
             const part = commentTask(dev, cfg, label);
@@ -1594,7 +1735,7 @@ function commentAll() {
             lines.push('[' + label + '] 评论 FAIL ' + (e && e.message ? e.message : e));
         }
     }
-    lines.push('[mgmusic] 评论完成：' + cfg.devices.length + ' 个账号，失败 ' + failCount);
+    lines.push('[mgmusic] 评论完成：' + devices.length + ' 个账号，失败 ' + failCount);
     logLines(lines);
     return { ok: failCount === 0, lines: lines };
 }
@@ -1654,7 +1795,7 @@ function validateConfig(input) {
     cfg.app_import = Object.assign({}, DEFAULTS.app_import, input.app_import || {});
     cfg.app_import.enabled = !!cfg.app_import.enabled;
     cfg.comment = Object.assign({}, DEFAULTS.comment, input.comment || {});
-    cfg.comment.enabled = !!cfg.comment.enabled;
+    cfg.comment.enabled = cfg.comment.enabled === undefined ? true : !!cfg.comment.enabled;
     cfg.comment.song_id = String(cfg.comment.song_id || '').trim();
     cfg.comment.content = String(cfg.comment.content || '好听').trim() || '好听';
     cfg.comment.resource_type = String(cfg.comment.resource_type || '2021').trim() || '2021';
@@ -1663,7 +1804,7 @@ function validateConfig(input) {
     cfg.comment.log_id = String(cfg.comment.log_id || '');
     cfg.comment.fk_token = String(cfg.comment.fk_token || '');
     cfg.comment.source = String(cfg.comment.source || '1');
-    cfg.comment.mode = cfg.comment.mode === 'h5' ? 'h5' : 'native';
+    cfg.comment.mode = cfg.comment.mode === 'h5' ? 'h5' : (cfg.comment.mode === 'ios' ? 'ios' : 'android');
     cfg.comment.path = String(cfg.comment.path || DEFAULTS.comment.path);
     if (cfg.comment.path.charAt(0) !== '/') throw new Error('comment.path 必须以 / 开头');
     if (cfg.comment.body !== null && cfg.comment.body !== undefined
@@ -1782,8 +1923,14 @@ register_route(API + '/run', 'POST', route(function () {
     return json(200, runDaily());
 }));
 
-register_route(API + '/comment', 'POST', route(function () {
-    return json(200, commentAll());
+register_route(API + '/sign', 'POST', route(function (req) {
+    const body = parseBody(req);
+    return json(200, signAll(body.uid));
+}));
+
+register_route(API + '/comment', 'POST', route(function (req) {
+    const body = parseBody(req);
+    return json(200, commentAll(body.uid));
 }));
 
 register_route(API + '/report', 'POST', route(function (req) {
@@ -1802,6 +1949,12 @@ register_nav({ label: '咪咕音乐', icon: '🎵' });
 register_cron('daily', '0 5 0,12,22 * * *', function () {
     runDaily();
 }, { summary: '每日 00:05/12:05/22:05 签到 + 听歌补报' });
+
+register_handler('sign', function () {
+    const r = signAll();
+    if (!r.ok) throw new Error('签到有失败，详见插件日志');
+    return r;
+});
 
 register_handler('comment', function () {
     const r = commentAll();

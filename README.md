@@ -2,10 +2,10 @@
 
 `mgmusic-plugin` 是 GitHub 项目/发布包名；面板里注册的插件 id 是 **`mgmusic`**。插件提供以下能力：
 
-- **daily 定时任务**：每天 00:05 / 12:05 / 22:05 执行 login-access、qsq、zyd-sign、窗口打卡、听歌补报、领奖
+- **daily 定时任务**：每天 00:05 / 12:05 / 22:05 执行 login-access、签到、qsq、zyd-sign、窗口打卡、听歌补报、领奖
 - **report 手动任务**：补报一次 `song-duration` 并领取已达档位
 - **macOS App 账号同步**：从已登录的咪咕 App 读取真实 uid/msisdn，自动生成 ce；不再手动抓包
-- **自带配置页**：账号卡片、短信登录、状态查询、立即执行、补报、签名自检
+- **自带配置页**：账号卡片、短信登录、签到 / 评论按钮、状态查询、立即执行、补报、签名自检
 
 ## 页面
 
@@ -13,7 +13,7 @@
 
 面板页不再把 `config.json` 直接铺成一个大文本框，改成三块：
 
-- **账号**：账号卡片（手机号 / uid 脱敏、登录来源、会话 cookie 有无）；「添加账号」走手机号 + 短信验证码；每个账号可改名、改补报目标、删除。
+- **账号**：账号卡片（手机号 / uid 脱敏、登录来源、会话 cookie 有无）；「添加账号」走手机号 + 短信验证码；每个账号可签到、评论、改名、改补报目标、删除。
 - **运行**：查询状态 / 立即执行 daily / 补报；会执行登录、任务上报和领奖。
 - **管理设置默认隐藏**：App 同步、超时、TLS、证书、评论等属于维护者选项，普通用户看不到；维护者在 URL 后加 `?admin=1`（或 `#admin`）才会显示。
 - **只读功能已移除**：不再提供普通用户或管理页的只读开关；旧配置里的 `readonly` 字段会被忽略并清掉。
@@ -33,10 +33,10 @@ uid / deviceid / ce 由短信登录或 App 同步自动维护，不需要用户�
 - 开始：账号数量
 - 身份校验：uid / 昵称（脱敏）
 - 期初：音符、任务数
-- 每个动作：`login-access`、`task-report`、评论、听歌补报、领奖
+- 每个动作：`login-access`、签到、`task-report`、评论、听歌补报、领奖
 - 每个任务的跳过原因：已完成 / 非窗口时段 / 补报关闭
 - 结果：音符 `before→after`、完成数、领取数、动作数、跳过数、失败数
-- 汇总：账号数、失败账号数、领取数、耗时
+- 汇总：账号数、失败账号数、签到数、领取数、耗时
 
 失败行走 `fail` 日志，正常结果走 `success` / `info`。面板「运行记录 → 日志」和推送正文里都能看到这些行。
 
@@ -73,7 +73,7 @@ uid / deviceid / ce 由短信登录或 App 同步自动维护，不需要用户�
 也可以手动下载 [`mgmusic-plugin-0.1.1.zip`](https://github.com/asunajs/mgmusic-plugin/releases/download/v0.1.1/mgmusic-plugin-0.1.1.zip)
 后在「插件管理 → 上传」里安装。
 
-> 本地开发版是 **0.3.0**（短信登录按手机号解析 uid + macOS App 同步 + 身份硬校验，未发布到商城；商城 Release 仍是 0.1.1）。
+> 本地开发版是 **0.3.1**（短信登录按手机号解析 uid + macOS App 同步 + 身份硬校验，未发布到商城；商城 Release 仍是 0.1.1）。
 
 ## 安装
 
@@ -170,16 +170,16 @@ node scripts/sync-macos-account.mjs
   "cert": "",
   "tls": "",
   "comment": {
-    "enabled": false,
-    "song_id": "",
+    "enabled": true,
+    "song_id": "600929000006498997",
     "content": "好听",
-    "resource_type": "2021",
+    "resource_type": "2",
     "comment_info": "",
     "target_comment_id": "",
     "log_id": "",
     "fk_token": "",
     "source": "app",
-    "mode": "native",
+    "mode": "android",
     "path": "/user/api/comment/add/v2.0",
     "body": null,
     "extra": {}
@@ -198,13 +198,13 @@ node scripts/sync-macos-account.mjs
 | `timeout_ms` | 单次 HTTP 超时（1000–60000） |
 | `cert` | 可选；默认用内置证书 hex 前 32 字符；换证书时填完整 hex |
 | `tls` | 空 = 默认 rustls；`native` = 平台 TLS（老网关） |
-| `comment.enabled` | 默认 `false`；评论自动发送尚未闭合（缺 `fkToken`/V005 签名），不要开进 daily |
-| `comment.song_id` | 要评论的歌曲 contentId；开启评论时必填 |
+| `comment.enabled` | 默认 `true`；Android 头已实测可发评论并完成任务，daily 会执行 |
+| `comment.song_id` | 要评论的歌曲 contentId；默认 `600929000006498997` |
 | `comment.content` | 评论内容，默认 `好听` |
-| `comment.resource_type` | 歌曲默认 `2021` |
+| `comment.resource_type` | 默认 `2`（歌曲资源；用 `2021` 评论歌单不计数） |
 | `comment.comment_info` | 可选；填了就直接作为 `commentInfo` 字段，覆盖 `content` |
-| `comment.fk_token` | App 评论风控 token；真实抓包里每次不同，插件目前无法生成 |
-| `comment.mode` | `native` = V005 原生头；`h5` = H5 头；实测 `h5` 回 `870001`，`native` 缺 token 回 `870006` |
+| `comment.fk_token` | Android 头可留空；iOS 头需要 App 生成的 token |
+| `comment.mode` | `android` = Android V005 头（默认、实测可用）；`ios` = iOS 头；`h5` = H5 头（回 `870001`） |
 | `comment.body` | 可选；填对象则直接作为请求体，便于抓包后校准 |
 | `comment.extra` | 可选；合并进默认请求体的额外字段 |
 
@@ -238,9 +238,10 @@ node scripts/sync-macos-account.mjs
 
 | 任务 | 调度 | 说明 |
 |---|---|---|
-| `daily` | `0 5 0,12,22 * * *` | 00:05 / 12:05 / 22:05；qsq + zyd-sign + 窗口打卡 + 听歌补报 + 领奖；未配置 devices 时记一条 warn 并跳过 |
+| `daily` | `0 5 0,12,22 * * *` | 00:05 / 12:05 / 22:05；签到 + qsq + zyd-sign + 窗口打卡 + 听歌补报 + 领奖；未配置 devices 时记一条 warn 并跳过 |
+| `sign` | 手动「签到」按钮；`daily` 里自动执行 | `GET /act-jbzx/sign/status` + 未签时 `POST /act-jbzx/sign` |
 | `report` | 手动（面板建任务或配置页按钮） | 补报一次 `song-duration`，随后领奖 |
-| `comment` | 手动「评论一次」；`daily` 里 `comment.enabled=true` 时也会执行 | 已实测任务记账，但自动请求未闭合；默认关闭 |
+| `comment` | 手动「评论一次」；`daily` 里 `comment.enabled=true` 时也会执行 | Android V005 头已实测；默认开启，任务完成即跳过 |
 
 协议事实（2026-10-15 实测）：
 
@@ -248,36 +249,38 @@ node scripts/sync-macos-account.mjs
 - 所有接口幂等，重复 report 无副作用
 - 领取/查询接口不需要 sign；`song-duration` 需要 V005 sign
 - `qsq` / `zyd-sign` 是纯上报即发币；打卡窗口外静默不记
+- 签到是独立接口 `/act-jbzx/sign`，不在任务列表里；`sign/status` 返回 `isSign`、`signNum`、7 天奖励
 - **评论任务不走 `task-report`**：2026-11-05 实测评论后 `completeTime=1`，但没有 `task-report` 请求；评论是 App 侧评论事件记账
-- 评论接口已按 2026-11-05 App 真实抓包修正 host/body；`fkToken` 和 V005 签名仍未复现，默认关闭
+- 评论接口已按 2026-11-05 App 真实抓包修正 host/body；2026-11-06 用 Android V005 头实测发评论成功，任务 1/1、音符 +5
 
 ## 验证
 
 - 签名向量 10/10（QuickJS 26ms）
-- 面板内实测：dummy 设备完成 `login-access`、qsq、zyd-sign、30 分钟补报、7 档领奖
+- 面板内实测：尾号 2716 完成 `login-access`、签到状态、qsq、zyd-sign、30 分钟补报、7 档领奖
+- 2026-11-06 评论实测：Android V005 头 + 空 `fkToken` → `000000`，任务 1/1，音符 64→69
 - 配置页「签名自检」：`mgSign("hello") = 0B646EAD2072F5A932D2F0A742BE72ED`
 
-## 评论（已抓包，自动发送未闭合）
+## 评论（Android V005 头，实测可用）
 
-2026-11-05 已用 Reqable 抓到 App 真实评论请求，并实际发出成功：
+2026-11-05 抓到 App 真实评论请求；2026-11-06 在尾号 2716 上实测成功：
 
 ```text
 POST https://app.pd.nf.migu.cn/user/api/comment/add/v2.0
 {"code":"000000","info":"操作成功","data":{"reportId":"<uuid>"}}
 ```
 
-发出后金币中心任务变为 `每日评论任意歌曲: 1/1`，**没有** `task-report` 请求。
+随后 `每日评论任意歌曲: 1/1`，音符 `64→69`（+5），没有 `task-report` 请求。
 
 真实 body（顶层评论）：
 
 ```json
 {
   "source": "app",
-  "userId": "<19位 userDomainId>",
-  "fkToken": "<base64 风控 token>",
-  "resourceId": "<歌曲 contentId>",
-  "resourceType": "2021",
-  "commentInfo": "<评论正文>"
+  "userId": "<H5 uid>",
+  "fkToken": "",
+  "resourceId": "600929000006498997",
+  "resourceType": "2",
+  "commentInfo": "好听"
 }
 ```
 
@@ -285,18 +288,12 @@ POST https://app.pd.nf.migu.cn/user/api/comment/add/v2.0
 
 - host 是 `app.pd.nf.migu.cn`，不是 `app.c.nf.migu.cn`；
 - `source` 固定 `app`，body 不塞 `logId`；
-- `userId` 是 App 的 19 位用户域 id，不是 H5 的 `922...` uid；
-- `fkToken` 是评论风控 token，App 每次生成不同值；
-- 回复评论还要 `targetCommentId` / `mainCommentId`。
+- **Android 头 + 内置 `mgSign(path+ce+ts+body)` 可用**，`fkToken` 留空也能过；
+- `resourceType` 用 `2`（歌曲）；用 `2021` 评论歌单时接口成功但不计任务；
+- `userId` 用 H5 uid 即可，不需要 App 的 19 位用户域 id；
+- 回复评论才需要 `targetCommentId` / `mainCommentId`。
 
-插件已按抓包修正 host 和 body，并保留 `comment.fk_token` 配置项。但：
-
-- 缺/错 `fkToken` 时服务端返回 `870006 内部错误`；
-- `h5` 模式返回 `870001 内部错误`；
-- 插件内置的 `mgSign` 对真实 App 请求签名不匹配，V005 拼接式仍未闭合。
-
-所以 `comment.enabled` 继续默认 `false`，不要让它进 daily；等拿到 `fkToken` 生成上下文和真实签名拼接口后再开。详细记录见
-[`mcloud-capture/migu-music/re/13-comment-capture.md`](../../mcloud-capture/migu-music/re/13-comment-capture.md)。
+`comment.mode=android` 是默认路径；`ios` 头仍需要 App 生成 `fkToken`，不作为默认。原 Python 把评论列为“行为核销型不可伪造”，这次走的是 Android 客户端等价请求，不是伪造客户端事件。
 
 ## 说明 / 边界
 
