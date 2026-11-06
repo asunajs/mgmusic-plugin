@@ -66,14 +66,14 @@ uid / deviceid / ce 由短信登录或 App 同步自动维护，不需要用户�
 ## 面板商城
 
 已收录到 `rust-plugin-panel` 的插件商城：打开「插件列表 → 插件商城」，找到
-「咪咕音乐金币中心」点安装即可。条目 id 是 `mgmusic-plugin`，仓库是
+「咪咕音乐金币中心」点安装即可。条目 id 是 `mgmusic`，仓库是
 [`asunajs/mgmusic-plugin`](https://github.com/asunajs/mgmusic-plugin)，Release 里挂的是
 面板能直接解压的 zip。
 
 也可以手动下载 [`mgmusic-plugin-0.1.1.zip`](https://github.com/asunajs/mgmusic-plugin/releases/download/v0.1.1/mgmusic-plugin-0.1.1.zip)
 后在「插件管理 → 上传」里安装。
 
-> 本地开发版是 **0.3.3**（短信登录按手机号解析 uid + macOS App 同步 + 身份硬校验，未发布到商城；商城 Release 仍是 0.1.1）。
+> 本地开发版是 **0.3.3**（短信登录 + 签到 + 评论 + 随机任务间隔；已发布到商城）。
 
 ## 安装
 
