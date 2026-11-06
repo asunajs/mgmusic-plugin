@@ -94,6 +94,14 @@
               <input id="set-report-ms" class="input" type="number" min="1000" max="21600000" step="1000" inputmode="numeric" />
             </label>
             <label class="field">
+              <span class="field-label">任务间隔最小（毫秒）</span>
+              <input id="set-interval-min" class="input" type="number" min="0" max="15000" step="500" inputmode="numeric" />
+            </label>
+            <label class="field">
+              <span class="field-label">任务间隔最大（毫秒）</span>
+              <input id="set-interval-max" class="input" type="number" min="0" max="15000" step="500" inputmode="numeric" />
+            </label>
+            <label class="field">
               <span class="field-label">TLS 模式</span>
               <select id="set-tls" class="input">
                 <option value="">默认（rustls）</option>

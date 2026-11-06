@@ -75,6 +75,10 @@ const DEFAULTS = {
     },
     report_ms: 60000,
     timeout_ms: 15000,
+    task_interval: {
+        min_ms: 1000,
+        max_ms: 3000,
+    },
     cert: '',
     tls: '', // '' = 默认 rustls；'native' = 平台 TLS（老网关用）
     comment: {
@@ -927,6 +931,21 @@ function inWindow(win) {
     return h >= win[0] && h < win[1];
 }
 
+/** 任务之间的随机间隔；墙钟超过 45s 后不再加，避免撞面板 60s 预算。 */
+function sleepMs(ms) {
+    return new Promise(function (resolve) { setTimeout(resolve, ms); });
+}
+
+async function taskPause(cfg, started) {
+    const t = (cfg && cfg.task_interval) || {};
+    const min = Number(t.min_ms || 0);
+    const max = Number(t.max_ms || 0);
+    if (max <= 0) return;
+    if (started && Date.now() - started > 45000) return;
+    const ms = min + Math.floor(Math.random() * (Math.max(min, max) - min + 1));
+    if (ms > 0) await sleepMs(ms);
+}
+
 function loadConfig() {
     let raw;
     try {
@@ -945,6 +964,11 @@ function loadConfig() {
     delete cfg.readonly; // 旧配置里的 readonly 字段直接忽略
     cfg.report_ms = clampInt(cfg.report_ms, 1000, 6 * 3600 * 1000, DEFAULTS.report_ms);
     cfg.timeout_ms = clampInt(cfg.timeout_ms, 1000, 60000, DEFAULTS.timeout_ms);
+    cfg.task_interval = Object.assign({}, DEFAULTS.task_interval,
+        (raw && typeof raw.task_interval === 'object' && !Array.isArray(raw.task_interval)) ? raw.task_interval : {});
+    cfg.task_interval.min_ms = clampInt(cfg.task_interval.min_ms, 0, 15000, DEFAULTS.task_interval.min_ms);
+    cfg.task_interval.max_ms = clampInt(cfg.task_interval.max_ms, 0, 15000, DEFAULTS.task_interval.max_ms);
+    if (cfg.task_interval.max_ms < cfg.task_interval.min_ms) cfg.task_interval.max_ms = cfg.task_interval.min_ms;
     cfg.cert = typeof cfg.cert === 'string' ? cfg.cert.trim() : '';
     cfg.tls = cfg.tls === 'native' ? 'native' : '';
     return cfg;
@@ -1472,7 +1496,7 @@ function topupSongtime(dev, cfg, label) {
     return { lines: lines, ok: ok };
 }
 
-function runDevice(dev, cfg, label) {
+async function runDevice(dev, cfg, label, started) {
     const lines = [];
     const meta = {
         failed: false,
@@ -1518,6 +1542,7 @@ function runDevice(dev, cfg, label) {
         lines.push('[' + label + '] login-access: OK');
     }
 
+    await taskPause(cfg, started);
     const sg = signTask(dev, cfg, label);
     for (let j = 0; j < sg.lines.length; j += 1) lines.push(sg.lines[j]);
     if (!sg.ok) markFail();
@@ -1539,6 +1564,7 @@ function runDevice(dev, cfg, label) {
             lines.push('[' + label + '] ' + name + ': 非窗口时段(' + win.join('-') + '),跳过');
             continue;
         }
+        await taskPause(cfg, started);
         meta.actions += 1;
         const r = callApi(dev, cfg, 'POST', '/act-task/task-report', { taskId: tid });
         const code = apiCode(r.data);
@@ -1552,6 +1578,7 @@ function runDevice(dev, cfg, label) {
         }
     }
 
+    await taskPause(cfg, started);
     const cmt = commentTask(dev, cfg, label);
     for (let i = 0; i < cmt.length; i += 1) {
         lines.push(cmt[i]);
@@ -1618,7 +1645,7 @@ function updateJobSummary(text) {
     }
 }
 
-function runDaily() {
+async function runDaily() {
     const started = Date.now();
     let cfg = loadConfig();
     try {
@@ -1653,7 +1680,7 @@ function runDaily() {
         const dev = cfg.devices[i];
         const label = deviceLabel(dev, i);
         try {
-            const part = runDevice(dev, cfg, label);
+            const part = await runDevice(dev, cfg, label, started);
             const meta = part.meta || {};
             for (let j = 0; j < part.length; j += 1) lines.push(part[j]);
             if (meta.failed) failedDevices += 1;
@@ -1663,6 +1690,7 @@ function runDaily() {
             if (meta.after >= 0) after = after < 0 ? meta.after : after + meta.after;
             done += Number(meta.done || 0);
             total += Number(meta.total || 0);
+            await taskPause(cfg, started);
         } catch (e) {
             failedDevices += 1;
             lines.push('[' + label + '] FAIL ' + (e && e.message ? e.message : e));
@@ -1885,6 +1913,13 @@ function validateConfig(input) {
     delete cfg.readonly; // 旧配置里的 readonly 字段直接忽略
     cfg.report_ms = clampInt(cfg.report_ms, 1000, 6 * 3600 * 1000, DEFAULTS.report_ms);
     cfg.timeout_ms = clampInt(cfg.timeout_ms, 1000, 60000, DEFAULTS.timeout_ms);
+    if (input.task_interval !== undefined && (typeof input.task_interval !== 'object' || Array.isArray(input.task_interval))) {
+        throw new Error('task_interval 必须是对象');
+    }
+    cfg.task_interval = Object.assign({}, DEFAULTS.task_interval, input.task_interval || {});
+    cfg.task_interval.min_ms = clampInt(cfg.task_interval.min_ms, 0, 15000, DEFAULTS.task_interval.min_ms);
+    cfg.task_interval.max_ms = clampInt(cfg.task_interval.max_ms, 0, 15000, DEFAULTS.task_interval.max_ms);
+    if (cfg.task_interval.max_ms < cfg.task_interval.min_ms) cfg.task_interval.max_ms = cfg.task_interval.min_ms;
     cfg.cert = typeof cfg.cert === 'string' ? cfg.cert.trim() : '';
     cfg.tls = cfg.tls === 'native' ? 'native' : '';
     if (cfg.cert && cfg.cert.length < 32) throw new Error('cert 至少 32 个 hex 字符（或留空用内置前缀）');
@@ -1917,9 +1952,9 @@ function json(status, obj) {
 }
 
 function route(fn) {
-    return function (req) {
+    return async function (req) {
         try {
-            return fn(req);
+            return await fn(req);
         } catch (e) {
             const out = { ok: false, error: (e && e.message ? e.message : String(e)) };
             if (e && e.lines) out.lines = e.lines;
@@ -1985,8 +2020,8 @@ register_route(API + '/app-import', 'POST', route(function () {
     });
 }));
 
-register_route(API + '/run', 'POST', route(function () {
-    return json(200, runDaily());
+register_route(API + '/run', 'POST', route(async function () {
+    return json(200, await runDaily());
 }));
 
 register_route(API + '/sign', 'POST', route(function (req) {
@@ -2013,7 +2048,7 @@ register_route(API + '/selftest', 'GET', route(function () {
 register_nav({ label: '咪咕音乐', icon: '🎵' });
 
 register_cron('daily', '0 5 0,12,22 * * *', function () {
-    runDaily();
+    return runDaily();
 }, { summary: '每日 00:05/12:05/22:05 签到 + 听歌补报' });
 
 register_handler('sign', function () {

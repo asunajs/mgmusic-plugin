@@ -2,10 +2,10 @@
 
 `mgmusic-plugin` 是 GitHub 项目/发布包名；面板里注册的插件 id 是 **`mgmusic`**。插件提供以下能力：
 
-- **daily 定时任务**：每天 00:05 / 12:05 / 22:05 执行 login-access、签到、qsq、zyd-sign、窗口打卡、听歌补报、领奖
+- **daily 定时任务**：每天 00:05 / 12:05 / 22:05 执行 login-access、签到、qsq、zyd-sign、窗口打卡、听歌补报、领奖；任务之间随机等待 1–3 秒
 - **report 手动任务**：补报一次 `song-duration` 并领取已达档位
 - **macOS App 账号同步**：从已登录的咪咕 App 读取真实 uid/msisdn，自动生成 ce；不再手动抓包
-- **自带配置页**：账号卡片、短信登录、签到 / 评论按钮、状态查询、立即执行、补报、签名自检
+- **自带配置页**：账号卡片、短信登录、签到 / 评论按钮、状态查询、立即执行、补报、签名自检；任务间隔可调
 
 ## 页面
 
@@ -167,6 +167,10 @@ node scripts/sync-macos-account.mjs
   "topup_min": 30,
   "report_ms": 60000,
   "timeout_ms": 15000,
+  "task_interval": {
+    "min_ms": 1000,
+    "max_ms": 3000
+  },
   "cert": "",
   "tls": "",
   "comment": {
@@ -196,6 +200,7 @@ node scripts/sync-macos-account.mjs
 | `cookie` | 实测 H5 头有 `mgAppH5CookieId` + `task-session-id`；插件只接受一个字符串，用 `; ` 拼接。领奖/任务上报建议带上，空值未验证 |
 | `report_ms` | report 模式默认补报毫秒数（默认 60000） |
 | `timeout_ms` | 单次 HTTP 超时（1000–60000） |
+| `task_interval` | 任务之间的随机等待，默认 1000–3000ms；设 `max_ms=0` 关闭；墙钟超过 45s 后自动不再等待，避免撞面板 60s 预算 |
 | `cert` | 可选；默认用内置证书 hex 前 32 字符；换证书时填完整 hex |
 | `tls` | 空 = 默认 rustls；`native` = 平台 TLS（老网关） |
 | `comment.enabled` | 默认 `true`；Android 头已实测可发评论并完成任务，daily 会执行 |

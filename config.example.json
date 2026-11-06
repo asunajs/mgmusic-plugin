@@ -22,5 +22,9 @@
     "path": "/user/api/comment/add/v2.0",
     "body": null,
     "extra": {}
+  },
+  "task_interval": {
+    "min_ms": 1000,
+    "max_ms": 3000
   }
 }
