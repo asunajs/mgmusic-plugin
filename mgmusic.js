@@ -29,7 +29,7 @@ import {
 } from 'host-api';
 import fs from 'node:fs';
 
-const VERSION = '0.3.2';
+const VERSION = '0.3.3';
 const PLUGIN = 'mgmusic';
 const API = '/plugins/mgmusic/api';
 
@@ -1245,12 +1245,64 @@ function querySignState(dev, cfg) {
     return r.data || {};
 }
 
+/** 新人 7 天签到状态；只有返回 days/isSign 的账号才走这条链。 */
+function queryNewUserSignState(dev, cfg) {
+    const r = ensureOk(callApi(dev, cfg, 'GET', '/act-jbzx/new-user-receive/status'), 'new-user-sign-status');
+    return r.data || {};
+}
+
+/**
+ * 新人 7 天签到。2026-11-06 抓包：7542 的 App 点签到实际走
+ * POST /act-jbzx/new-user-receive（body {}），返回 scoreNum=6；
+ * 普通 /act-jbzx/sign 对这类账号回 200013“暂无法参与”。
+ */
+function newUserSignTask(dev, cfg, label) {
+    let st;
+    try {
+        st = queryNewUserSignState(dev, cfg);
+    } catch (e) {
+        return null;
+    }
+    if (!Array.isArray(st.days) || st.isSign === undefined) return null;
+    const num = Number(st.currentDay || 0);
+    if (st.isSign) {
+        return {
+            ok: true,
+            skipped: true,
+            lines: ['[' + label + '] 签到: 新人签到 今日已领（第' + (num || 1) + '天），跳过'],
+        };
+    }
+    const r = callApi(dev, cfg, 'POST', '/act-jbzx/new-user-receive', {});
+    const code = apiCode(r.data);
+    if (code === '000000') {
+        const score = (r.data && r.data.data && r.data.data.scoreNum !== undefined)
+            ? ' +' + r.data.data.scoreNum : '';
+        const lines = ['[' + label + '] 签到: 新人签到 OK' + score];
+        try {
+            const after = queryNewUserSignState(dev, cfg);
+            if (after.isSign) {
+                lines.push('[' + label + '] 签到: 已确认（新人第' + Number(after.currentDay || num + 1) + '天）');
+            }
+        } catch (e) {
+            lines.push('[' + label + '] 签到: 回读失败 ' + (e && e.message ? e.message : e));
+        }
+        return { ok: true, action: true, lines: lines };
+    }
+    if (code === '200001') {
+        return { ok: true, skipped: true, lines: ['[' + label + '] 签到: 新人签到 今日已领，跳过'] };
+    }
+    return null;
+}
+
 /**
  * 每日签到。已签直接跳过；未签才 POST /act-jbzx/sign。
  * 2026-11-06 实测：2716 账号返回 isSign=true、signNum=2；再 POST 回 200001“今天已签到”。
+ * 7542 这类新号走 new-user-receive，普通 sign 会回 200013。
  */
 function signTask(dev, cfg, label) {
     const lines = [];
+    const nu = newUserSignTask(dev, cfg, label);
+    if (nu) return nu;
     let before;
     try {
         before = querySignState(dev, cfg);
@@ -1273,7 +1325,10 @@ function signTask(dev, cfg, label) {
     } else if (code === '200001') {
         lines.push('[' + label + '] 签到: 今日已签，跳过');
     } else if (code === '200013') {
-        // 账号不符合活动资格（常见于新号/非活动用户）；不是插件错误，不要污染 daily 失败数。
+        // 新号可能只走 new-user-receive；再试一次新人签到。
+        const retry = newUserSignTask(dev, cfg, label);
+        if (retry) return retry;
+        // 仍无新人链：账号不符合活动资格；不是插件错误，不要污染 daily 失败数。
         lines.push('[' + label + '] 签到: SKIP 200013 暂无法参与（账号不符合活动资格）');
         return { ok: true, skipped: true, lines: lines };
     } else {
@@ -1665,9 +1720,16 @@ function statusAll() {
             const st = queryState(dev, cfg);
             lines.push('[' + label + '] 音符=' + st.bean + ' ce=' + mask(devCe(dev), 8, 4));
             try {
-                const sg = querySignState(dev, cfg);
-                lines.push('  签到: ' + (sg.isSign ? '今日已签' : '今日未签')
-                    + '（第' + Number(sg.signNum || 0) + '天）');
+                let nu = null;
+                try { nu = queryNewUserSignState(dev, cfg); } catch (e) { nu = null; }
+                if (nu && Array.isArray(nu.days) && nu.isSign !== undefined) {
+                    lines.push('  签到: 新人签到' + (nu.isSign ? '今日已领' : '今日未领')
+                        + '（第' + Number(nu.currentDay || 0) + '天）');
+                } else {
+                    const sg = querySignState(dev, cfg);
+                    lines.push('  签到: ' + (sg.isSign ? '今日已签' : '今日未签')
+                        + '（第' + Number(sg.signNum || 0) + '天）');
+                }
             } catch (e) {
                 lines.push('  签到: 查询失败 ' + (e && e.message ? e.message : e));
             }

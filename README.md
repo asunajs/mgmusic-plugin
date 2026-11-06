@@ -73,7 +73,7 @@ uid / deviceid / ce 由短信登录或 App 同步自动维护，不需要用户�
 也可以手动下载 [`mgmusic-plugin-0.1.1.zip`](https://github.com/asunajs/mgmusic-plugin/releases/download/v0.1.1/mgmusic-plugin-0.1.1.zip)
 后在「插件管理 → 上传」里安装。
 
-> 本地开发版是 **0.3.2**（短信登录按手机号解析 uid + macOS App 同步 + 身份硬校验，未发布到商城；商城 Release 仍是 0.1.1）。
+> 本地开发版是 **0.3.3**（短信登录按手机号解析 uid + macOS App 同步 + 身份硬校验，未发布到商城；商城 Release 仍是 0.1.1）。
 
 ## 安装
 
@@ -239,7 +239,7 @@ node scripts/sync-macos-account.mjs
 | 任务 | 调度 | 说明 |
 |---|---|---|
 | `daily` | `0 5 0,12,22 * * *` | 00:05 / 12:05 / 22:05；签到 + qsq + zyd-sign + 窗口打卡 + 听歌补报 + 领奖；未配置 devices 时记一条 warn 并跳过 |
-| `sign` | 手动「签到」按钮；`daily` 里自动执行 | `GET /act-jbzx/sign/status` + 未签时 `POST /act-jbzx/sign`；`200013 暂无法参与` 记为跳过，不算失败 |
+| `sign` | 手动「签到」按钮；`daily` 里自动执行 | 普通账号 `GET /act-jbzx/sign/status` + 未签时 `POST /act-jbzx/sign`；新号自动走 `new-user-receive/status` + `POST new-user-receive`；`200013` 最终仍无资格时记为跳过 |
 | `report` | 手动（面板建任务或配置页按钮） | 补报一次 `song-duration`，随后领奖 |
 | `comment` | 手动「评论一次」；`daily` 里 `comment.enabled=true` 时也会执行 | Android V005 头已实测；默认开启，任务完成即跳过 |
 
@@ -250,6 +250,7 @@ node scripts/sync-macos-account.mjs
 - 领取/查询接口不需要 sign；`song-duration` 需要 V005 sign
 - `qsq` / `zyd-sign` 是纯上报即发币；打卡窗口外静默不记
 - 签到是独立接口 `/act-jbzx/sign`，不在任务列表里；`sign/status` 返回 `isSign`、`signNum`、7 天奖励
+- 新人 7 天签到走 `/act-jbzx/new-user-receive/status` + `POST /act-jbzx/new-user-receive`（body `{}`）；尾号 7542 实测返回 `scoreNum=6`，普通 `/sign` 对这类账号回 `200013 暂无法参与`
 - **评论任务不走 `task-report`**：2026-11-05 实测评论后 `completeTime=1`，但没有 `task-report` 请求；评论是 App 侧评论事件记账
 - 评论接口已按 2026-11-05 App 真实抓包修正 host/body；2026-11-06 用 Android V005 头实测发评论成功，任务 1/1、音符 +5
 
@@ -258,6 +259,7 @@ node scripts/sync-macos-account.mjs
 - 签名向量 10/10（QuickJS 26ms）
 - 面板内实测：尾号 2716 完成 `login-access`、签到状态、qsq、zyd-sign、30 分钟补报、7 档领奖
 - 2026-11-06 评论实测：Android V005 头 + 空 `fkToken` → `000000`，任务 1/1，音符 64→69
+- 2026-11-06 签到实测：2716 普通签到已签；7542 走新人签到 `new-user-receive`，`scoreNum=6`
 - 配置页「签名自检」：`mgSign("hello") = 0B646EAD2072F5A932D2F0A742BE72ED`
 
 ## 评论（Android V005 头，实测可用）
