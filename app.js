@@ -10,6 +10,7 @@ const S = {
   editing: -1,
   sending: false,
   sendTimer: null,
+  sendPhone: '',
 };
 
 function clone(v) {
@@ -243,14 +244,28 @@ async function saveConfigObject(cfg) {
   return data.config;
 }
 
+function resetSendState() {
+  clearSendTimer();
+  S.sendPhone = '';
+  setSendButton('发送验证码', false);
+}
+
 function openLoginDialog() {
-  $('login-dialog').hidden = false;
+  // 每次「添加账号」都从干净状态开始：上一位账号的 60 秒重发倒计时不能带过来。
+  clearSendTimer();
+  S.sending = false;
+  S.sendPhone = '';
+  $('login-phone').value = '';
+  $('login-code').value = '';
+  setSendButton('发送验证码', false);
   setHint('login-hint', '', '');
+  $('login-dialog').hidden = false;
   $('login-phone').focus();
 }
 
 function closeLoginDialog() {
   $('login-dialog').hidden = true;
+  resetSendState();
 }
 
 function setSendButton(text, disabled) {
@@ -280,6 +295,7 @@ async function sendCode() {
     const data = await call('/login/send', { method: 'POST', body: { msisdn: phone } });
     setHint('login-hint', '', data.message || '验证码已发送，请查收短信');
     $('login-code').focus();
+    S.sendPhone = phone;
     let left = 60;
     setSendButton('重发（' + left + 's）', true);
     clearSendTimer();
@@ -287,6 +303,7 @@ async function sendCode() {
       left -= 1;
       if (left <= 0) {
         clearSendTimer();
+        S.sendPhone = '';
         setSendButton('发送验证码', false);
       } else {
         setSendButton('重发（' + left + 's）', true);
@@ -479,6 +496,13 @@ $('refresh').addEventListener('click', loadAll);
 $('add-account').addEventListener('click', openLoginDialog);
 $('login-close').addEventListener('click', closeLoginDialog);
 $('login-cancel').addEventListener('click', closeLoginDialog);
+$('login-phone').addEventListener('input', function () {
+  // 换了手机号就解除上一号码的倒计时，让用户能给另一个账号发验证码。
+  if (S.sendPhone && ($('login-phone').value || '').trim() !== S.sendPhone) {
+    resetSendState();
+    setHint('login-hint', '', '');
+  }
+});
 $('send-code').addEventListener('click', sendCode);
 $('login').addEventListener('click', doLogin);
 $('account-close').addEventListener('click', closeAccountDialog);

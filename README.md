@@ -225,6 +225,9 @@ node scripts/sync-macos-account.mjs
 4. 登录成功后用手机号调 `/v2.0/user/getMyPage.do` 解析真实 uid，再用真实 uid 生成
    `uid` / `msisdn` / `deviceid` / `ce` 写进 `devices`。拿不到真实 uid 时只报错、不保存设备。
 
+发码限流按手机号分别计算：账号 A 发过验证码，不会阻止账号 B 发码；关闭/重新打开
+「添加账号」会清空上一位账号的重发倒计时。
+
 这条走的是 **passport 网页版短信登录**（`/password/publickey` +
 `/login/dynamicpassword` + `/authn/dynamicpassword`），不是 App 的 DUP SDK；
 不需要手动抓包，也不需要手填 uid/deviceid/ce。
