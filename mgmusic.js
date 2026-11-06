@@ -487,7 +487,7 @@ function importMacAppAccount() {
 
 // ──────────────────────────────────────────────────────────── 短信登录（passport 网页版）
 
-let lastLoginSendAt = 0;
+const lastLoginSendAt = {};
 let pendingLogin = null;
 
 const B64 = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/';
@@ -685,10 +685,11 @@ function sendLoginCode(msisdn) {
     const phone = String(msisdn || '').trim();
     if (!/^1[3-9]\d{9}$/.test(phone)) throw new Error('手机号格式不对');
     const now = Date.now();
-    if (lastLoginSendAt && now - lastLoginSendAt < 60000) {
-        throw new Error('发码太频繁，请 60 秒后再试');
+    // 按手机号分别限流：账号 A 发过码不应阻止账号 B 发码。
+    if (lastLoginSendAt[phone] && now - lastLoginSendAt[phone] < 60000) {
+        throw new Error('该手机号发码太频繁，请 60 秒后再试');
     }
-    lastLoginSendAt = now;
+    lastLoginSendAt[phone] = now;
     const key = loginPublicKey();
     const enc = rsaEncrypt(phone, key.modulus, key.exponent);
     const qs = [
