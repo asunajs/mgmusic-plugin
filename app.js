@@ -196,6 +196,9 @@ function fillSettings() {
   $('set-app-import').checked = !!(cfg.app_import && cfg.app_import.enabled);
   $('set-timeout').value = cfg.timeout_ms === undefined ? 15000 : cfg.timeout_ms;
   $('set-report-ms').value = cfg.report_ms === undefined ? 60000 : cfg.report_ms;
+  const ti = cfg.task_interval || {};
+  $('set-interval-min').value = ti.min_ms === undefined ? 1000 : ti.min_ms;
+  $('set-interval-max').value = ti.max_ms === undefined ? 3000 : ti.max_ms;
   $('set-tls').value = cfg.tls === 'native' ? 'native' : '';
   $('set-cert').value = cfg.cert || '';
   const comment = cfg.comment || {};
@@ -393,6 +396,9 @@ async function saveSettings() {
   cfg.app_import = Object.assign({}, cfg.app_import, { enabled: !!$('set-app-import').checked });
   cfg.timeout_ms = clampInt($('set-timeout').value, 1000, 60000, 15000);
   cfg.report_ms = clampInt($('set-report-ms').value, 1000, 21600000, 60000);
+  const tiMin = clampInt($('set-interval-min').value, 0, 15000, 1000);
+  const tiMax = clampInt($('set-interval-max').value, 0, 15000, 3000);
+  cfg.task_interval = { min_ms: tiMin, max_ms: Math.max(tiMin, tiMax) };
   cfg.tls = $('set-tls').value === 'native' ? 'native' : '';
   cfg.cert = ($('set-cert').value || '').trim();
   cfg.comment = Object.assign({}, cfg.comment, {
