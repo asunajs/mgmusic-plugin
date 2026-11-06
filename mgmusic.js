@@ -29,7 +29,7 @@ import {
 } from 'host-api';
 import fs from 'node:fs';
 
-const VERSION = '0.3.1';
+const VERSION = '0.3.2';
 const PLUGIN = 'mgmusic';
 const API = '/plugins/mgmusic/api';
 
@@ -1272,6 +1272,10 @@ function signTask(dev, cfg, label) {
             ? ' +' + r.data.data.scoreNum : ''));
     } else if (code === '200001') {
         lines.push('[' + label + '] 签到: 今日已签，跳过');
+    } else if (code === '200013') {
+        // 账号不符合活动资格（常见于新号/非活动用户）；不是插件错误，不要污染 daily 失败数。
+        lines.push('[' + label + '] 签到: SKIP 200013 暂无法参与（账号不符合活动资格）');
+        return { ok: true, skipped: true, lines: lines };
     } else {
         return { ok: false, lines: ['[' + label + '] 签到: FAIL ' + code + ' ' + apiInfo(r.data)] };
     }

@@ -73,7 +73,7 @@ uid / deviceid / ce 由短信登录或 App 同步自动维护，不需要用户�
 也可以手动下载 [`mgmusic-plugin-0.1.1.zip`](https://github.com/asunajs/mgmusic-plugin/releases/download/v0.1.1/mgmusic-plugin-0.1.1.zip)
 后在「插件管理 → 上传」里安装。
 
-> 本地开发版是 **0.3.1**（短信登录按手机号解析 uid + macOS App 同步 + 身份硬校验，未发布到商城；商城 Release 仍是 0.1.1）。
+> 本地开发版是 **0.3.2**（短信登录按手机号解析 uid + macOS App 同步 + 身份硬校验，未发布到商城；商城 Release 仍是 0.1.1）。
 
 ## 安装
 
@@ -239,7 +239,7 @@ node scripts/sync-macos-account.mjs
 | 任务 | 调度 | 说明 |
 |---|---|---|
 | `daily` | `0 5 0,12,22 * * *` | 00:05 / 12:05 / 22:05；签到 + qsq + zyd-sign + 窗口打卡 + 听歌补报 + 领奖；未配置 devices 时记一条 warn 并跳过 |
-| `sign` | 手动「签到」按钮；`daily` 里自动执行 | `GET /act-jbzx/sign/status` + 未签时 `POST /act-jbzx/sign` |
+| `sign` | 手动「签到」按钮；`daily` 里自动执行 | `GET /act-jbzx/sign/status` + 未签时 `POST /act-jbzx/sign`；`200013 暂无法参与` 记为跳过，不算失败 |
 | `report` | 手动（面板建任务或配置页按钮） | 补报一次 `song-duration`，随后领奖 |
 | `comment` | 手动「评论一次」；`daily` 里 `comment.enabled=true` 时也会执行 | Android V005 头已实测；默认开启，任务完成即跳过 |
 

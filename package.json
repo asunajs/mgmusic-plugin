@@ -1,6 +1,6 @@
 {
   "name": "mgmusic-plugin",
-  "version": "0.3.1",
+  "version": "0.3.2",
   "private": true,
   "type": "module",
   "description": "咪咕音乐金币中心 JS 插件（QuickJS / Node）",
