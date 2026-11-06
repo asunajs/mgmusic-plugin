@@ -158,17 +158,12 @@ function renderAccounts() {
     sign.className = 'btn btn-sm';
     sign.type = 'button';
     sign.textContent = '签到';
-    sign.addEventListener('click', () => doSign(dev.uid, sign));
-    const comment = document.createElement('button');
-    comment.className = 'btn btn-sm';
-    comment.type = 'button';
-    comment.textContent = '评论';
-    comment.addEventListener('click', () => doComment(dev.uid, comment));
+    sign.addEventListener('click', () => doSign(dev.uid || dev.label, sign));
     const query = document.createElement('button');
     query.className = 'btn btn-sm';
     query.type = 'button';
     query.textContent = '查询';
-    query.addEventListener('click', () => doStatus());
+    query.addEventListener('click', () => doStatus(dev.uid || dev.label, query));
     const edit = document.createElement('button');
     edit.className = 'btn btn-sm';
     edit.type = 'button';
@@ -180,7 +175,6 @@ function renderAccounts() {
     remove.textContent = '删除';
     remove.addEventListener('click', () => removeAccount(index));
     actions.appendChild(sign);
-    actions.appendChild(comment);
     actions.appendChild(query);
     actions.appendChild(edit);
     actions.appendChild(remove);
@@ -437,9 +431,12 @@ async function saveSettings() {
   }
 }
 
-async function doStatus() {
-  await withBusy($('status'), async () => {
-    const data = await call('/status');
+async function doStatus(uid, btn) {
+  const target = btn || $('status');
+  await withBusy(target, async () => {
+    const data = uid
+      ? await call('/status', { method: 'POST', body: { uid: uid } })
+      : await call('/status');
     showLines(data.lines);
     setState(data.ok ? 'success' : 'failed', data.ok ? '状态正常' : '有账号失败');
   });
@@ -470,13 +467,6 @@ async function doSign(uid, btn) {
   });
 }
 
-async function doComment(uid, btn) {
-  await withBusy(btn, async () => {
-    const data = await call('/comment', { method: 'POST', body: { uid: uid } });
-    showLines(data.lines);
-    setState(data.ok ? 'success' : 'failed', data.ok ? '评论完成' : '评论有失败');
-  });
-}
 
 async function doSelftest() {
   const out = $('advanced-out');
@@ -510,7 +500,7 @@ $('account-cancel').addEventListener('click', closeAccountDialog);
 $('account-save').addEventListener('click', saveAccount);
 $('save-settings').addEventListener('click', saveSettings);
 $('selftest').addEventListener('click', doSelftest);
-$('status').addEventListener('click', doStatus);
+$('status').addEventListener('click', () => doStatus());
 $('run').addEventListener('click', doRun);
 $('report').addEventListener('click', doReport);
 

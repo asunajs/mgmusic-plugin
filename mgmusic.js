@@ -1723,7 +1723,7 @@ async function runDaily() {
     return { ok: true, lines: lines, summary: short };
 }
 
-function statusAll() {
+function statusAll(uid) {
     let cfg = loadConfig();
     try {
         const imported = importMacAppAccount();
@@ -1737,10 +1737,12 @@ function statusAll() {
     } catch (e) {
         warn('[' + PLUGIN + '] macOS App 账号同步失败：' + (e && e.message ? e.message : e));
     }
+    const targets = pickDevices(cfg, uid);
+    if (uid && !targets.length) throw new Error('没有匹配 uid 的账号');
     const lines = [];
     let failCount = 0;
-    for (let i = 0; i < cfg.devices.length; i += 1) {
-        const dev = cfg.devices[i];
+    for (let i = 0; i < targets.length; i += 1) {
+        const dev = targets[i];
         const label = deviceLabel(dev, i);
         try {
             const id = assertIdentity(dev, cfg);
@@ -1773,13 +1775,15 @@ function statusAll() {
             lines.push('[' + label + '] FAIL ' + (e && e.message ? e.message : e));
         }
     }
-    if (!cfg.devices.length) lines.push('（未配置 devices）');
+    if (!targets.length) lines.push('（未配置 devices）');
     return { ok: failCount === 0, lines: lines };
 }
 
 function pickDevices(cfg, uid) {
     if (!uid) return cfg.devices;
-    return cfg.devices.filter(function (d) { return String(d.uid || '') === String(uid); });
+    return cfg.devices.filter(function (d) {
+        return String(d.uid || '') === String(uid) || String(d.label || '') === String(uid);
+    });
 }
 
 function signAll(uid) {
@@ -1998,6 +2002,11 @@ register_route(API + '/login/verify', 'POST', route(function (req) {
 
 register_route(API + '/status', 'GET', route(function () {
     return json(200, statusAll());
+}));
+
+register_route(API + '/status', 'POST', route(function (req) {
+    const body = parseBody(req);
+    return json(200, statusAll(body.uid || body.label || ''));
 }));
 
 register_route(API + '/app-import', 'POST', route(function () {
