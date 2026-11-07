@@ -1277,7 +1277,7 @@ function queryNewUserSignState(dev, cfg) {
 }
 
 /**
- * 新人 7 天签到。2026-11-06 抓包：7542 的 App 点签到实际走
+ * 新人 7 天签到。2026-11-06 抓包：新账号的 App 点签到实际走
  * POST /act-jbzx/new-user-receive（body {}），返回 scoreNum=6；
  * 普通 /act-jbzx/sign 对这类账号回 200013“暂无法参与”。
  */
@@ -1321,8 +1321,8 @@ function newUserSignTask(dev, cfg, label) {
 
 /**
  * 每日签到。已签直接跳过；未签才 POST /act-jbzx/sign。
- * 2026-11-06 实测：2716 账号返回 isSign=true、signNum=2；再 POST 回 200001“今天已签到”。
- * 7542 这类新号走 new-user-receive，普通 sign 会回 200013。
+ * 2026-11-06 实测：普通账号返回 isSign=true、signNum=2；再 POST 回 200001“今天已签到”。
+ * 新账号走 new-user-receive，普通 sign 会回 200013。
  */
 function signTask(dev, cfg, label) {
     const lines = [];
