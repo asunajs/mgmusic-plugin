@@ -311,3 +311,5 @@ POST https://app.pd.nf.migu.cn/user/api/comment/add/v2.0
 - 配置里有 `ce` / `msisdn` / `cookie`，属于敏感信息；它放在插件数据目录（不会被 `/plugins/` 静态服务），不要提交到 git。
 - 该插件只用 ECMAScript + `host-api` + `node:fs`（QuickJS 内置）；不要引入 `fetch` / `URL` / `TextEncoder` / `crypto`，QuickJS 没有。
 - 面板版本要求：`host-api` 带 `register_route` / `register_nav` 的版本（本仓库 0.3.0 实测）。
+
+- daily cron 预算 120 秒，每个阶段都会写日志，不会只在最后一次性输出。
