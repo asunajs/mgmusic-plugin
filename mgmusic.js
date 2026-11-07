@@ -30,7 +30,7 @@ import {
 } from 'host-api';
 import fs from 'node:fs';
 
-const VERSION = '0.3.3';
+const VERSION = '0.3.4';
 const PLUGIN = 'mgmusic';
 const API = '/plugins/mgmusic/api';
 const RUN_BUDGET_MS = 100000; // 面板 cron 预算 120s，内部留 20s 收尾

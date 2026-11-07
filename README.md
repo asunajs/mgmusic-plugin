@@ -73,7 +73,7 @@ uid / deviceid / ce 由短信登录或 App 同步自动维护，不需要用户�
 也可以手动下载 [`mgmusic-plugin-0.1.1.zip`](https://github.com/asunajs/mgmusic-plugin/releases/download/v0.1.1/mgmusic-plugin-0.1.1.zip)
 后在「插件管理 → 上传」里安装。
 
-> 本地开发版是 **0.3.3**（短信登录 + 签到 + 评论 + 随机任务间隔；已发布到商城）。
+> 本地开发版是 **0.3.4**（短信登录 + 签到 + 评论 + 随机任务间隔；已发布到商城）。
 
 ## 安装
 
