@@ -25,6 +25,7 @@ import {
   register_route,
   register_nav,
   set_job_summary,
+  worker_hint,
   http_fetch,
 } from 'host-api';
 import fs from 'node:fs';
@@ -32,6 +33,10 @@ import fs from 'node:fs';
 const VERSION = '0.3.3';
 const PLUGIN = 'mgmusic';
 const API = '/plugins/mgmusic/api';
+const RUN_BUDGET_MS = 100000; // 面板 cron 预算 120s，内部留 20s 收尾
+
+// 长任务独占一条 worker，避免拖住同线程的其它插件。
+worker_hint('exclusive');
 
 const BASE = 'https://app.c.nf.migu.cn';
 const COMMENT_BASE = 'https://app.pd.nf.migu.cn';
@@ -947,6 +952,14 @@ async function taskPause(cfg, started) {
     if (ms > 0) await sleepMs(ms);
 }
 
+function progress(label, text) {
+    info('[' + label + '] ' + text);
+}
+
+function overBudget(started) {
+    return started && Date.now() - started > RUN_BUDGET_MS;
+}
+
 function loadConfig() {
     let raw;
     try {
@@ -1499,6 +1512,7 @@ function topupSongtime(dev, cfg, label) {
 
 async function runDevice(dev, cfg, label, started) {
     const lines = [];
+    progress(label, '开始');
     const meta = {
         failed: false,
         errors: 0,
@@ -1521,6 +1535,7 @@ async function runDevice(dev, cfg, label, started) {
         id = assertIdentity(dev, cfg);
         lines.push('[' + label + '] 身份: uid=' + mask(id.uid, 6, 4)
             + (id.nick ? (' nick=' + id.nick) : ''));
+        progress(label, '身份校验通过');
     } catch (e) {
         markFail();
         lines.push('[' + label + '] 身份校验失败: ' + (e && e.message ? e.message : e));
@@ -1533,6 +1548,7 @@ async function runDevice(dev, cfg, label, started) {
     meta.before = st.bean;
     meta.total = Object.keys(st.tasks).length;
     lines.push('[' + label + '] 期初: 音符=' + st.bean + ' 任务数=' + meta.total);
+    progress(label, '期初 音符=' + st.bean + ' 任务数=' + meta.total);
 
     const login = callApi(dev, cfg, 'GET', '/act-task/login-access');
     const loginCode = apiCode(login.data);
@@ -1541,15 +1557,31 @@ async function runDevice(dev, cfg, label, started) {
         lines.push('[' + label + '] login-access: FAIL ' + loginCode + ' ' + apiInfo(login.data));
     } else {
         lines.push('[' + label + '] login-access: OK');
+        progress(label, 'login-access OK');
     }
 
-    await taskPause(cfg, started);
+    // 所有需要 mgSign 的写操作都先跑完，再进入 await/随机间隔；
+    // 这样长任务不会在签名中途撞上执行边界。
+    progress(label, '听歌补报/领奖: 检查中');
+    const top = topupSongtime(dev, cfg, label);
+    if (!top.ok) markFail();
+    for (let i = 0; i < top.lines.length; i += 1) lines.push(top.lines[i]);
+
+    progress(label, '签到: 检查中');
     const sg = signTask(dev, cfg, label);
-    for (let j = 0; j < sg.lines.length; j += 1) lines.push(sg.lines[j]);
+    for (let j = 0; j < sg.lines.length; j += 1) { lines.push(sg.lines[j]); info(sg.lines[j]); }
     if (!sg.ok) markFail();
     else if (sg.action) { meta.actions += 1; meta.signed += 1; }
     else if (sg.skipped) meta.skips += 1;
 
+    progress(label, '评论: 检查任务');
+    const cmt = commentTask(dev, cfg, label);
+    for (let i = 0; i < cmt.length; i += 1) {
+        lines.push(cmt[i]);
+        if (cmt[i].indexOf('FAIL') >= 0) markFail();
+    }
+
+    await taskPause(cfg, started);
     for (let i = 0; i < REPORT_TASKS.length; i += 1) {
         const tid = REPORT_TASKS[i][0];
         const name = REPORT_TASKS[i][1];
@@ -1565,30 +1597,27 @@ async function runDevice(dev, cfg, label, started) {
             lines.push('[' + label + '] ' + name + ': 非窗口时段(' + win.join('-') + '),跳过');
             continue;
         }
+        if (overBudget(started)) {
+            lines.push('[' + label + '] ' + name + ': 超出本轮预算,跳过');
+            meta.skips += 1;
+            break;
+        }
         await taskPause(cfg, started);
         meta.actions += 1;
+        progress(label, name + ': 上报中');
         const r = callApi(dev, cfg, 'POST', '/act-task/task-report', { taskId: tid });
         const code = apiCode(r.data);
         const extra = (r.data.data && r.data.data.drawNum !== undefined)
             ? ' drawNum=' + r.data.data.drawNum : '';
         if (code === '000000') {
             lines.push('[' + label + '] ' + name + ': OK' + extra);
+            progress(label, name + ': OK' + extra);
         } else {
             markFail();
             lines.push('[' + label + '] ' + name + ': FAIL ' + code + ' ' + apiInfo(r.data) + extra);
+            progress(label, name + ': FAIL ' + code);
         }
     }
-
-    await taskPause(cfg, started);
-    const cmt = commentTask(dev, cfg, label);
-    for (let i = 0; i < cmt.length; i += 1) {
-        lines.push(cmt[i]);
-        if (cmt[i].indexOf('FAIL') >= 0) markFail();
-    }
-
-    const top = topupSongtime(dev, cfg, label);
-    if (!top.ok) markFail();
-    for (let i = 0; i < top.lines.length; i += 1) lines.push(top.lines[i]);
 
     const rec = receiveSongRewards(dev, cfg, label);
     meta.claimed += rec.gained;
@@ -1622,6 +1651,7 @@ async function runDevice(dev, cfg, label, started) {
         + ' 动作=' + meta.actions
         + ' 跳过=' + meta.skips
         + ' 失败=' + meta.errors);
+    info(lines[lines.length - 1]);
     lines.meta = meta;
     return lines;
 }
@@ -1680,6 +1710,10 @@ async function runDaily() {
     for (let i = 0; i < cfg.devices.length; i += 1) {
         const dev = cfg.devices[i];
         const label = deviceLabel(dev, i);
+        if (overBudget(started)) {
+            lines.push('[mgmusic] 超出本轮预算，剩余账号跳过');
+            break;
+        }
         try {
             const part = await runDevice(dev, cfg, label, started);
             const meta = part.meta || {};
@@ -1705,7 +1739,7 @@ async function runDaily() {
         + '，领取 +' + claimed
         + '，耗时 ' + duration + 'ms';
     lines.push(summary);
-    logLines(lines);
+    logLines([summary]);
 
     const beforeText = before < 0 ? '?' : String(before);
     const afterText = after < 0 ? '?' : String(after);
@@ -2032,7 +2066,7 @@ register_route(API + '/app-import', 'POST', route(function () {
 
 register_route(API + '/run', 'POST', route(async function () {
     return json(200, await runDaily());
-}));
+}), { budget_ms: 120000 });
 
 register_route(API + '/sign', 'POST', route(function (req) {
     const body = parseBody(req);
@@ -2059,7 +2093,7 @@ register_nav({ label: '咪咕音乐', icon: '🎵' });
 
 register_cron('daily', '0 5 0,12,22 * * *', function () {
     return runDaily();
-}, { summary: '每日 00:05/12:05/22:05 签到 + 听歌补报' });
+}, { budget_ms: 120000, summary: '每日 00:05/12:05/22:05 签到 + 听歌补报' });
 
 register_handler('sign', function () {
     const r = signAll();
