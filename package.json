@@ -6,6 +6,8 @@
   "description": "咪咕音乐金币中心 JS 插件（QuickJS / Node）",
   "scripts": {
     "check": "node --check mgmusic.js && node --check app.js",
-    "pack": "bash scripts/pack.sh"
+    "check:llrt": "node --check llrt/mgmusic.js && node --check llrt/webui/app.js",
+    "pack": "bash scripts/pack.sh",
+    "build:panelllrt": "node scripts/build-panelllrt.mjs"
   }
 }
