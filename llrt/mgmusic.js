@@ -61,7 +61,7 @@
 //   · 咪咕接口对 Accept-Encoding 敏感，统一 identity，避免 gzip 无法解
 import host from 'panel:host';
 
-const VERSION = '0.4.0';
+const VERSION = '0.5.0';
 const PLUGIN = 'mgmusic';
 const API = '/plugins/mgmusic/api'; // 老面板用它拼 register_route；0.4.x 由 evt.rel 分发，这里只作说明
 const RUN_BUDGET_MS = 100000; // 面板 cron 预算 120s，内部留 20s 收尾

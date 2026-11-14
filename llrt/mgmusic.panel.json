@@ -3,5 +3,51 @@
   "order": 20,
   "description": "咪咕音乐金币中心：每日签到、评论、听歌补报、领奖",
   "min_panel": "0.4.0",
-  "capabilities": ["http", "sqlite", "notify"]
+  "capabilities": [
+    "http",
+    "sqlite",
+    "notify"
+  ],
+  "config": {
+    "fields": [
+      {
+        "name": "topup_min",
+        "label": "听歌补报目标（分钟）",
+        "type": "number",
+        "default": 30,
+        "help": "每个账号每天补报到多少分钟，0 = 不补报。账号自己也能覆盖这一格。（只在首次导入时生效：插件里已经有账号时，以插件自己的设置为准）"
+      },
+      {
+        "name": "timeout_ms",
+        "label": "单次请求超时（毫秒）",
+        "type": "number",
+        "default": 15000,
+        "help": "1000–60000。网络差就调大；调太小会让「签到」这类请求整批失败。（只在首次导入时生效：插件里已经有账号时，以插件自己的设置为准）"
+      },
+      {
+        "name": "report_ms",
+        "label": "补报毫秒数",
+        "type": "number",
+        "default": 60000,
+        "help": "手动「补报」一次上报多长的听歌时长（默认 60000 = 1 分钟）。（只在首次导入时生效：插件里已经有账号时，以插件自己的设置为准）"
+      },
+      {
+        "name": "tls",
+        "label": "TLS 实现",
+        "type": "select",
+        "default": "",
+        "options": [
+          {
+            "value": "",
+            "label": "默认（rustls）"
+          },
+          {
+            "value": "native",
+            "label": "系统 TLS（老网关用）"
+          }
+        ],
+        "help": "只有在默认那条握不上手时才改。（只在首次导入时生效：插件里已经有账号时，以插件自己的设置为准）"
+      }
+    ]
+  }
 }

@@ -344,3 +344,31 @@ bash scripts/deploy-panel.sh --restart                        # 装完顺手重�
 
 0.4.x 的行为差异（相对 0.3.x，都是环境层收敛）：任务只有 `daily` 一条（签到/评论/补报走 HTTP 路由）、
 不写任务摘要、不再有「macOS App 账号同步」（0.3.x 那个读 App plist 的选项已删）。
+
+## 发布（面板 0.4 的 zip，0.5.0 起）
+
+资产名 `mgmusic-plugin-<version>-panel04.zip`（当前 **0.5.0**），挂在
+<https://github.com/asunajs/mgmusic-plugin/releases>；同目录还有 `.sha256`。
+
+```bash
+npm run build:panelllrt     # llrt/ → dist/panel-llrt/（mgmusic.js + mgmusic.webui/ + 清单）
+npm run pack:panel04        # → dist/mgmusic-plugin-<version>-panel04.zip（+ .sha256、SHA256SUMS）
+```
+
+**必须从干净 worktree/tag 打**：`scripts/zip.mjs` 固定 DOS 时间戳，同输入同 sha256 ——
+但在脏工作树里打，包里会混进未提交的改动，发布出去的 sha256 就和干净树对不上。
+
+### 面板的「插件配置」表单
+
+`llrt/mgmusic.panel.json` 现在带 `config.fields`，插件卡片 → **配置** 是一张表单（不再是裸 JSON）：
+
+| 配置项 | 类型 | 默认 | 说明 |
+|---|---|---|---|
+| `topup_min` | number | 30 | 每账号听歌补报目标（分钟），`0` = 不补报 |
+| `timeout_ms` | number | 15000 | 单次请求超时（1000–60000） |
+| `report_ms` | number | 60000 | 手动「补报」一次上报多长的听歌时长 |
+| `tls` | select | 空 | 只有默认那条握不上手时才选 `native` |
+
+⚠ **只当播种源**：这四格只在 `mgmusic.config` 还不存在时读一次（新装 / 账号列表为空）。
+之后一切读写走面板的 `state` 表，**文件不再覆盖它** —— 否则「在界面上删光了账号，
+下次加载又被文件复活」。已有账号的安装要改这几格，请在插件自己的界面里改。

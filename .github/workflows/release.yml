@@ -1,8 +1,22 @@
 name: Release
 
+# 打一个**面板能直接装**的 0.4 形状 zip，挂到 GitHub Release 上。
+#
+# ⚠ 2026-11-14 改成「只手动触发」，并且只打 0.4 形状：
+#   · 产物是 `dist/mgmusic-plugin-<version>-panel04.zip`（`npm run pack:panel04`：
+#     `mgmusic.js` + `mgmusic.panel.json` + `mgmusic.webui/` 全部平铺在 zip 根）；
+#   · 发布由维护者从**干净 worktree + tag** 跑，zip 的 sha256 才和发布出去的一致
+#     （`scripts/zip.mjs` 固定 DOS 时间戳，同输入同 sha256；脏工作树里打包会混进未提交改动）；
+#   · **不再**在 push tag 时自动建 release：那会与手动上传的资产同名覆盖，
+#     一次"同名但 sha256 不同"的覆盖就让货架上的 sha256 变成孤儿。
+#
+# 要发的话：Actions → Release → Run workflow（填已存在的 tag）。
 on:
-  push:
-    tags: ['v*']
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: '要发布的 tag（例如 v0.5.0，必须已经存在且与 package.json 一致）'
+        required: true
 
 permissions:
   contents: write
@@ -12,26 +26,39 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.tag }}
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
 
       - name: 校验 tag 与 package.json
         run: |
           set -euo pipefail
-          TAG="${GITHUB_REF_NAME}"
+          TAG="${{ inputs.tag }}"
           VER="$(node -p "require('./package.json').version")"
           test "v$VER" = "$TAG" || { echo "tag=$TAG != v$VER"; exit 1; }
 
-      - name: 打包
-        run: npm run pack
+      - name: 语法检查
+        run: npm run check && npm run check:llrt
+
+      - name: 构建 + 打包（0.4 形状）
+        run: |
+          set -euo pipefail
+          npm run build:panelllrt
+          npm run pack:panel04
 
       - name: 发布
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           set -euo pipefail
-          TAG="${GITHUB_REF_NAME}"
+          TAG="${{ inputs.tag }}"
+          ZIP=$(ls dist/*-panel04.zip)
           if gh release view "$TAG" >/dev/null 2>&1; then
-            gh release upload "$TAG" mgmusic-plugin-*.zip dist/SHA256SUMS --clobber
+            gh release upload "$TAG" "$ZIP" "$ZIP.sha256" --clobber
           else
-            gh release create "$TAG" mgmusic-plugin-*.zip dist/SHA256SUMS \
+            gh release create "$TAG" "$ZIP" "$ZIP.sha256" \
               --title "mgmusic-plugin $TAG" --generate-notes
           fi
