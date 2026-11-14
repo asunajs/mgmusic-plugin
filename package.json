@@ -8,6 +8,7 @@
     "check": "node --check mgmusic.js && node --check app.js",
     "check:llrt": "node --check llrt/mgmusic.js && node --check llrt/webui/app.js",
     "pack": "bash scripts/pack.sh",
-    "build:panelllrt": "node scripts/build-panelllrt.mjs"
+    "build:panelllrt": "node scripts/build-panelllrt.mjs",
+    "deploy:panel": "bash scripts/deploy-panel.sh"
   }
 }

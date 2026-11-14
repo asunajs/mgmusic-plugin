@@ -60,7 +60,9 @@ uid / deviceid / ce 由短信登录或 App 同步自动维护，不需要用户�
 | `mgmusic.js` | 插件后端（QuickJS / ESM，安装到 `plugins/js/mgmusic.js`） |
 | `index.html` / `app.js` / `style.css` / `boot.js` | 插件配置页（安装到 `plugins/mgmusic/`） |
 | `config.example.json` | 配置模板（安装到插件数据目录，首次安装时复制） |
-| `scripts/sync-macos-account.mjs` | 从已登录的 macOS 咪咕 App 同步真实 uid/msisdn 到插件数据根 |
+| `scripts/sync-macos-account.mjs` | 从已登录的 macOS 咪咕 App 同步真实 uid/msisdn 到插件数据根（**仅 0.3.x**；0.4.x 已删这个功能） |
+| `llrt/` | **0.4.x 变体**（panel-llrt / LLRT）的源：`mgmusic.js` + `webui/` |
+| `scripts/build-panelllrt.mjs` / `scripts/deploy-panel.sh` | 0.4.x 的构建与部署（见文末「0.4.x」一节） |
 | `install.sh` | 一键安装到本机面板 |
 
 ## 面板商城
@@ -313,3 +315,32 @@ POST https://app.pd.nf.migu.cn/user/api/comment/add/v2.0
 - 面板版本要求：`host-api` 带 `register_route` / `register_nav` 的版本（本仓库 0.3.0 实测）。
 
 - daily cron 预算 120 秒，每个阶段都会写日志，不会只在最后一次性输出。
+## 0.4.x（panel-llrt / LLRT）变体
+
+新面板（`panel-llrt`，Rust + LLRT）用的是**另一套宿主契约**：`import host from 'panel:host'`、
+状态存宿主 sqlite 的 `state` 表、WebUI 走 `register_web` + `/app.css` + `<p-*>` 套件。
+差异有 200 多处且不机械，所以 **单独维护一份源**（`llrt/`），不做构建期转换。
+
+```text
+llrt/mgmusic.js                       0.4.x 源（0.3.4 那份仍在仓库根，老面板照用）
+llrt/webui/{index.html,style.css,app.js,boot.js}
+scripts/build-panelllrt.mjs           llrt/ → dist/panel-llrt/{mgmusic.js, mgmusic.webui/}
+scripts/deploy-panel.sh               dist/ → 面板实例的 plugins/（含样式门禁 + 逐个 cmp）
+```
+
+**分工**：面板提供面板，插件（源码/构建/部署）归本仓 —— 面板仓 `panel-llrt` 里没有这个插件的代码。
+
+```bash
+npm run build:panelllrt      # 只构建，产物在 dist/panel-llrt/（已被 .gitignore 忽略）
+
+npm run deploy:panel         # 构建 → 样式门禁 → 装进 $PANEL_PLUGINS_DIR（默认 ~/panel-3030/plugins）
+PANEL_PLUGINS_DIR=/opt/panel/plugins npm run deploy:panel     # 装到别处
+bash scripts/deploy-panel.sh --restart                        # 装完顺手重启 launchd 服务
+```
+
+装完要让它生效：面板界面插件卡点「重载」（只影响这一个插件），或 `--restart` 重启整个服务。
+**不碰账号数据**：账号在面板库的 `state` 表里，迁移走 `plugin-data/mgmusic/config.json` 播种
+（详见 panel-llrt 仓的 `docs/mgmusic-migration.md`）。
+
+0.4.x 的行为差异（相对 0.3.x，都是环境层收敛）：任务只有 `daily` 一条（签到/评论/补报走 HTTP 路由）、
+不写任务摘要、不再有「macOS App 账号同步」（0.3.x 那个读 App plist 的选项已删）。
