@@ -1,0 +1,7 @@
+{
+  "title": "咪咕音乐",
+  "order": 20,
+  "description": "咪咕音乐金币中心：每日签到、评论、听歌补报、领奖",
+  "min_panel": "0.4.0",
+  "capabilities": ["http", "sqlite", "notify"]
+}

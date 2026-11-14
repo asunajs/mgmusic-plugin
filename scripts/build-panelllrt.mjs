@@ -68,4 +68,11 @@ if (!css.includes('--style-ver')) {
   console.error('❌ 产物 style.css 里没有 --style-ver：panel-llrt 的 check-plugin-style 会红');
   process.exit(1);
 }
-console.log(`\n产物已写到 dist/panel-llrt/（${NAME}.js + ${NAME}.webui/）；装进实例用 npm run deploy:panel`);
+
+// 清单：面板读 plugins/<name>.panel.json 出配置表单、核对 min_panel。
+// 源在 llrt/（被 git 跟踪），构建时拷到 dist 顶层与 <name>.js 并列。
+const manifestSrc = join(SRC, `${NAME}.panel.json`);
+const manifestDst = join(OUT, `${NAME}.panel.json`);
+cpSync(manifestSrc, manifestDst);
+console.log(`  ✅ ${manifestDst}`);
+console.log(`\n产物已写到 dist/panel-llrt/（${NAME}.js + ${NAME}.webui/ + ${NAME}.panel.json）；装进实例用 npm run deploy:panel`);

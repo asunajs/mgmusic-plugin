@@ -50,14 +50,16 @@ fi
 
 echo "→ 装到 $DEST"
 cp "dist/panel-llrt/$NAME.js" "$DEST/$NAME.js"
+cp "dist/panel-llrt/$NAME.panel.json" "$DEST/$NAME.panel.json"
 rm -rf "${DEST:?}/$NAME.webui"
 cp -R "dist/panel-llrt/$NAME.webui" "$DEST/$NAME.webui"
 
 cmp "dist/panel-llrt/$NAME.js" "$DEST/$NAME.js"
+cmp "dist/panel-llrt/$NAME.panel.json" "$DEST/$NAME.panel.json"
 for f in index.html style.css app.js boot.js; do
   cmp "dist/panel-llrt/$NAME.webui/$f" "$DEST/$NAME.webui/$f"
 done
-echo "✅ 5 个文件逐个 cmp 一致"
+echo "✅ 6 个文件逐个 cmp 一致"
 
 if [ "$RESTART" = 1 ]; then
   echo "→ 重启 launchd 服务（dev.panel）"
