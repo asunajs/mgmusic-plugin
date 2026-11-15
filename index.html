@@ -171,7 +171,17 @@
 
           <p id="login-hint" class="hint"></p>
 
+          <p class="hint">或者：粘贴移动云盘登录态里的 Authorization，直接换咪咕登录，不用短信。</p>
+
+          <label class="field">
+            <span class="field-label">移动云盘 Authorization</span>
+            <input id="cloud-auth" class="input" type="password" autocomplete="off" spellcheck="false"
+              placeholder="Basic ... 或 pc:手机号:token" />
+            <small class="field-help">只在本机插件里换票据，不会保存这段 Authorization。</small>
+          </label>
+
           <div class="row end">
+            <button id="cloud-login" class="btn" type="button">用云盘授权登录</button>
             <button id="login-cancel" class="btn" type="button">取消</button>
             <button id="login" class="btn primary" type="button">登录并保存</button>
           </div>

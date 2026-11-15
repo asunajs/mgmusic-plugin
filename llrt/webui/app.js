@@ -222,6 +222,7 @@ function deviceLabel(dev, index) {
 function sourceLabel(dev) {
   const source = String((dev && dev.source) || '');
   if (source === 'macos-app' || source === 'app-account.json') return 'App 同步';
+  if (source === 'mcloud-auth') return '云盘授权';
   return '短信登录';
 }
 
@@ -392,6 +393,7 @@ function openLoginDialog() {
   S.sendPhone = '';
   $('login-phone').value = '';
   $('login-code').value = '';
+  $('cloud-auth').value = '';
   setSendButton('发送验证码', false);
   setHint('login-hint', '', '');
   $('login-dialog').setAttribute('open', '');
@@ -462,6 +464,35 @@ async function doLogin() {
     closeLoginDialog();
     showLines(data.lines);
     setState('ok', '已登录');
+    setRunBadge('ok', '账号已保存');
+    setHint('settings-hint', '', '账号已保存；建议先点「查询状态」确认 uid 和音符。');
+  } catch (e) {
+    setHint('login-hint', 'error', e.message);
+    if (e.lines) showLines(e.lines);
+  } finally {
+    setBtnOff(btn, false);
+    setBtnText(btn, old);
+  }
+}
+
+async function doCloudLogin() {
+  const auth = ($('cloud-auth').value || '').trim();
+  if (!auth) {
+    setHint('login-hint', 'error', '先粘贴移动云盘 Authorization');
+    return;
+  }
+  const btn = $('cloud-login');
+  const old = btnText(btn);
+  setBtnOff(btn, true);
+  setBtnText(btn, '换票中…');
+  setHint('login-hint', '', '正在用云盘 auth 换咪咕登录票据…');
+  try {
+    const data = await post('/cloud-auth', { auth: auth });
+    S.config = data.config || S.config;
+    renderAll();
+    closeLoginDialog();
+    showLines(data.lines);
+    setState('ok', '云盘登录成功');
     setRunBadge('ok', '账号已保存');
     setHint('settings-hint', '', '账号已保存；建议先点「查询状态」确认 uid 和音符。');
   } catch (e) {
@@ -811,6 +842,7 @@ $('account-cancel').addEventListener('click', closeAccountDialog);
 $('account-save').addEventListener('click', saveAccount);
 $('send-code').addEventListener('click', sendCode);
 $('login').addEventListener('click', doLogin);
+$('cloud-login').addEventListener('click', doCloudLogin);
 $('save-settings').addEventListener('click', saveSettings);
 $('selftest').addEventListener('click', doSelftest);
 $('status').addEventListener('click', () => doStatus());

@@ -30,7 +30,7 @@ import {
 } from 'host-api';
 import fs from 'node:fs';
 
-const VERSION = '0.5.0';
+const VERSION = '0.5.1';
 const PLUGIN = 'mgmusic';
 const API = '/plugins/mgmusic/api';
 const RUN_BUDGET_MS = 100000; // 面板 cron 预算 120s，内部留 20s 收尾
@@ -47,6 +47,16 @@ const UA = 'Mozilla/5.0 (iPad; CPU OS 18_7 like Mac OS X) AppleWebKit/605.1.15 '
 
 const PASSPORT = 'https://passport.migu.cn';
 const LOGIN_PAGE = 'https://passport.migu.cn/login?sourceid=100001&apptype=0&authType=MiguPassport&display=web&logintype=1';
+
+// 移动云盘 auth → 咪咕登录：
+//   1) 云盘统一认证按 toSourceId=012008 换一张临时票据；
+//   2) 咪咕移动 SDK 的 CMCC 登录就是 getYDRZToken(sourceId=012008) 后加 "ANDT" 前缀；
+//   3) 再把 ANDT 票据交给咪咕 H5 换 pacmtoken/uid。
+const MCLOUD_SPEC_URL = 'https://user-njs.yun.139.com/user/querySpecTokenV2';
+const MCLOUD_SPEC_SOURCE = '012008';
+const MCLOUD_UA = 'MCloudApp/4.2.1 (Macintosh; macOS)';
+const MIGU_H5_TOKEN_URL = 'https://c.musicapp.migu.cn/user/h5/token-validate/v3.0';
+const MIGU_TOKEN_SOURCE = '220029';
 const LOGIN_UA = 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 '
     + '(KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36';
 
@@ -511,6 +521,30 @@ function base64Bytes(bytes) {
     return out;
 }
 
+function base64ToBytes(s) {
+    const clean = String(s || '').replace(/\s+/g, '');
+    if (/[^A-Za-z0-9+/=]/.test(clean)) throw new Error('云盘 auth 不是合法 Base64');
+    const out = [];
+    for (let i = 0; i < clean.length; i += 4) {
+        const c0 = B64.indexOf(clean.charAt(i));
+        const c1 = B64.indexOf(clean.charAt(i + 1));
+        const c2 = clean.charAt(i + 2) === '=' ? -1 : B64.indexOf(clean.charAt(i + 2));
+        const c3 = clean.charAt(i + 3) === '=' ? -1 : B64.indexOf(clean.charAt(i + 3));
+        if (c0 < 0 || c1 < 0) throw new Error('云盘 auth 不是合法 Base64');
+        out.push((c0 << 2) | (c1 >> 4));
+        if (c2 >= 0) out.push(((c1 & 15) << 4) | (c2 >> 2));
+        if (c3 >= 0) out.push(((c2 & 3) << 6) | c3);
+    }
+    return new Uint8Array(out);
+}
+
+function base64Text(s) {
+    const bytes = base64ToBytes(s);
+    let out = '';
+    for (let i = 0; i < bytes.length; i += 1) out += String.fromCharCode(bytes[i]);
+    return out;
+}
+
 function modPow(base, exp, mod) {
     let r = 1n;
     let b = base % mod;
@@ -792,7 +826,7 @@ function fetchH5Cookies(cookie, token) {
     }
 }
 
-function saveLoginDevice(msisdn, uid, deviceid, ce, cookie) {
+function saveLoginDevice(msisdn, uid, deviceid, ce, cookie, label, source) {
     if (!uid || String(uid) === '0') {
         throw new Error('拒绝保存 uid=0：服务端会把它当游客/其他账号，不能用于领豆');
     }
@@ -804,27 +838,134 @@ function saveLoginDevice(msisdn, uid, deviceid, ce, cookie) {
             break;
         }
     }
-    const label = 'migu-' + String(msisdn).slice(-4);
+    const fallbackLabel = 'migu-' + String(msisdn).slice(-4);
+    const finalLabel = String(label || '').trim() || fallbackLabel;
     if (idx < 0) {
         cfg.devices.push({
-            label: label,
+            label: finalLabel,
             msisdn: String(msisdn),
             uid: String(uid),
             deviceid: String(deviceid),
             ce: String(ce),
             cookie: String(cookie || ''),
+            source: String(source || ''),
             topup_min: cfg.topup_min,
         });
         idx = cfg.devices.length - 1;
     } else {
-        cfg.devices[idx].label = cfg.devices[idx].label || label;
+        cfg.devices[idx].label = cfg.devices[idx].label || finalLabel;
         cfg.devices[idx].msisdn = String(msisdn);
         cfg.devices[idx].uid = String(uid);
         cfg.devices[idx].deviceid = String(deviceid);
         cfg.devices[idx].ce = String(ce);
         cfg.devices[idx].cookie = String(cookie || '');
+        if (source) cfg.devices[idx].source = String(source);
     }
     return saveConfig(cfg);
+}
+
+function parseMcloudAuth(raw) {
+    let value = String(raw || '').trim();
+    if (!value) throw new Error('请粘贴移动云盘 Authorization');
+    let decoded;
+    if (/^basic\s+/i.test(value)) {
+        decoded = base64Text(value.replace(/^basic\s+/i, ''));
+    } else if (/^(pc|mobile):/i.test(value)) {
+        decoded = value;
+    } else if (/^[A-Za-z0-9+/=]{20,}$/.test(value)) {
+        decoded = base64Text(value);
+    } else {
+        throw new Error('云盘 Authorization 格式不对：需要 Basic ... 或 pc:手机号:token');
+    }
+    const first = decoded.indexOf(':');
+    const second = decoded.indexOf(':', first + 1);
+    if (first < 0 || second < 0) throw new Error('云盘 Authorization 解码后缺少手机号或 token');
+    const platform = decoded.slice(0, first).trim();
+    const phone = decoded.slice(first + 1, second).trim();
+    const token = decoded.slice(second + 1).trim();
+    if (platform !== 'pc' && platform !== 'mobile') {
+        throw new Error('云盘 Authorization 的平台字段不是 pc/mobile');
+    }
+    if (!/^1\d{10}$/.test(phone)) throw new Error('云盘 Authorization 里的手机号不合法');
+    if (token.length < 20) throw new Error('云盘 Authorization 里的 token 长度异常');
+    return {
+        header: 'Basic ' + base64Bytes(utf8(decoded)),
+        platform: platform,
+        phone: phone,
+        token: token,
+    };
+}
+
+function importMcloudAuth(rawAuth, label) {
+    const auth = parseMcloudAuth(rawAuth);
+    const cfg = loadConfig();
+    const mintHeaders = {
+        'content-type': 'application/json;charset=UTF-8',
+        authorization: auth.header,
+        accept: 'application/json',
+        'user-agent': MCLOUD_UA,
+        'accept-encoding': 'identity',
+    };
+    const mintRes = fetchRaw(
+        'POST',
+        MCLOUD_SPEC_URL,
+        mintHeaders,
+        JSON.stringify({ toSourceId: MCLOUD_SPEC_SOURCE }),
+        cfg
+    );
+    const mint = parseJsonSafe(mintRes.body);
+    if (!mint || String(mint.code) !== '0000' || !mint.data || !mint.data.token) {
+        const msg = mint && (mint.message || mint.msg) ? (mint.message || mint.msg) : '未知错误';
+        throw new Error('云盘换票失败：' + msg);
+    }
+    const temp = String(mint.data.token);
+    const deviceid = uuidV4().toUpperCase();
+    const query = [
+        'token=' + encodeURIComponent('ANDT' + temp),
+        'type=2',
+        'sourceId=' + encodeURIComponent(MIGU_TOKEN_SOURCE),
+    ].join('&');
+    const exchangeHeaders = {
+        deviceId: deviceid,
+        origin: 'https://music.migu.cn',
+        referer: 'https://music.migu.cn/',
+        accept: 'application/json, text/plain, */*',
+        'accept-encoding': 'identity',
+        'user-agent': UA,
+    };
+    const exchangeRes = fetchRaw('GET', MIGU_H5_TOKEN_URL + '?' + query, exchangeHeaders, undefined, cfg);
+    const exchange = parseJsonSafe(exchangeRes.body);
+    if (!exchange || String(exchange.code) !== '000000' || !exchange.data) {
+        const msg = exchange && exchange.info ? exchange.info : '未知错误';
+        throw new Error('咪咕登录换票失败：' + msg);
+    }
+    const uid = String(exchange.data.userId || '').trim();
+    if (!uid || uid === '0') throw new Error('咪咕登录成功但没有返回 userId');
+    const ce = makeCe(uid, auth.phone, deviceid);
+    const next = saveLoginDevice(
+        auth.phone,
+        uid,
+        deviceid,
+        ce,
+        '',
+        String(label || '').trim() || '云盘授权',
+        'mcloud-auth'
+    );
+    return {
+        ok: true,
+        lines: [
+            '[mgmusic] 云盘授权登录成功',
+            '  账号: ' + mask(auth.phone, 3, 4),
+            '  uid: ' + mask(uid, 6, 4),
+            '  来源: 移动云盘 auth',
+            '  已保存 ' + next.devices.length + ' 个账号，可先点「查询状态」确认。',
+        ],
+        account: {
+            msisdn: mask(auth.phone, 3, 4),
+            uid: mask(uid, 6, 4),
+            source: 'mcloud-auth',
+        },
+    };
 }
 
 function followLoginRedirect(redirectURL, token, cookie) {
@@ -2032,6 +2173,11 @@ register_route(API + '/login/send', 'POST', route(function (req) {
 register_route(API + '/login/verify', 'POST', route(function (req) {
     const body = parseBody(req);
     return json(200, loginWithCode(body.msisdn, body.code));
+}));
+
+register_route(API + '/cloud-auth', 'POST', route(function (req) {
+    const body = parseBody(req);
+    return json(200, importMcloudAuth(body.auth, body.label));
 }));
 
 register_route(API + '/status', 'GET', route(function () {

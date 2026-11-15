@@ -103,6 +103,7 @@ function deviceLabel(dev, index) {
 function sourceLabel(dev) {
   const source = String((dev && dev.source) || '');
   if (source === 'macos-app' || source === 'app-account.json') return 'App 同步';
+  if (source === 'mcloud-auth') return '云盘授权';
   return '短信登录';
 }
 
@@ -251,6 +252,7 @@ function openLoginDialog() {
   S.sendPhone = '';
   $('login-phone').value = '';
   $('login-code').value = '';
+  $('cloud-auth').value = '';
   setSendButton('发送验证码', false);
   setHint('login-hint', '', '');
   $('login-dialog').hidden = false;
@@ -334,6 +336,34 @@ async function doLogin() {
     closeLoginDialog();
     showLines(data.lines);
     setState('success', '已登录');
+    setHint('settings-hint', '', '账号已保存；建议先点「查询状态」确认 uid 和音符。');
+  } catch (e) {
+    setHint('login-hint', 'error', e.message);
+    if (e.lines) showLines(e.lines);
+  } finally {
+    btn.disabled = false;
+    btn.textContent = old;
+  }
+}
+
+async function doCloudLogin() {
+  const auth = ($('cloud-auth').value || '').trim();
+  if (!auth) {
+    setHint('login-hint', 'error', '先粘贴移动云盘 Authorization');
+    return;
+  }
+  const btn = $('cloud-login');
+  const old = btn.textContent;
+  btn.disabled = true;
+  btn.textContent = '换票中…';
+  setHint('login-hint', '', '正在用云盘 auth 换咪咕登录票据…');
+  try {
+    const data = await call('/cloud-auth', { method: 'POST', body: { auth: auth } });
+    S.config = data.config || S.config;
+    renderAll();
+    closeLoginDialog();
+    showLines(data.lines);
+    setState('success', '云盘登录成功');
     setHint('settings-hint', '', '账号已保存；建议先点「查询状态」确认 uid 和音符。');
   } catch (e) {
     setHint('login-hint', 'error', e.message);
@@ -495,6 +525,7 @@ $('login-phone').addEventListener('input', function () {
 });
 $('send-code').addEventListener('click', sendCode);
 $('login').addEventListener('click', doLogin);
+$('cloud-login').addEventListener('click', doCloudLogin);
 $('account-close').addEventListener('click', closeAccountDialog);
 $('account-cancel').addEventListener('click', closeAccountDialog);
 $('account-save').addEventListener('click', saveAccount);

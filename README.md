@@ -4,8 +4,9 @@
 
 - **daily 定时任务**：每天 00:05 / 12:05 / 22:05 执行 login-access、签到、qsq、zyd-sign、窗口打卡、听歌补报、领奖；任务之间随机等待 1–3 秒
 - **report 手动任务**：补报一次 `song-duration` 并领取已达档位
+- **移动云盘 auth 登录**：粘贴移动云盘登录态里的 `Authorization`，换咪咕登录并保存 uid/ce，不用短信
 - **macOS App 账号同步**：从已登录的咪咕 App 读取真实 uid/msisdn，自动生成 ce；不再手动抓包
-- **自带配置页**：账号卡片、短信登录、签到 / 查询按钮、状态查询、立即执行、补报、签名自检；任务间隔可调
+- **自带配置页**：账号卡片、短信登录 / 云盘 auth 登录、签到 / 查询按钮、状态查询、立即执行、补报、签名自检；任务间隔可调
 
 ## 页面
 
@@ -19,6 +20,20 @@
 - **只读功能已移除**：不再提供普通用户或管理页的只读开关；旧配置里的 `readonly` 字段会被忽略并清掉。
 
 uid / deviceid / ce 由短信登录或 App 同步自动维护，不需要用户手填。
+
+### 移动云盘 auth 登录（0.5.1）
+
+添加账号对话框里除了短信登录，还可以粘贴移动云盘的 `Authorization`（`Basic ...`，或解码后的
+`pc:手机号:token`）。插件只在本次请求里用它换票，**不会把这段 Authorization 写进配置**；
+换票成功后只保存 `msisdn` / `uid` / `deviceid` / `ce`，来源标记为「云盘授权」。
+
+换票链路已按咪咕移动 SDK 的 CMCC 登录实测校准：
+
+1. 用云盘 Authorization 向云盘统一认证按 `toSourceId=012008` 换临时票据；
+2. 票据加 `ANDT` 前缀，调咪咕 `/user/h5/token-validate/v3.0?type=2&sourceId=220029`；
+3. 返回 `userId` 后按现有规则生成 `ce` 并保存账号。
+
+云盘 auth 失效或账号未开通相应能力时，界面会直接显示上游错误，不会静默保存半个账号。
 
 页面主题由 `boot.js` 跟随面板：读取同源 localStorage 的 `panel-theme-v2`，并监听 `storage` 事件；面板切深/浅色时插件页即时同步，不需要刷新。
 
@@ -75,7 +90,7 @@ uid / deviceid / ce 由短信登录或 App 同步自动维护，不需要用户�
 也可以手动下载 [`mgmusic-plugin-0.1.1.zip`](https://github.com/asunajs/mgmusic-plugin/releases/download/v0.1.1/mgmusic-plugin-0.1.1.zip)
 后在「插件管理 → 上传」里安装。
 
-> 本地开发版是 **0.3.4**（短信登录 + 签到 + 评论 + 随机任务间隔；已发布到商城）。
+> 本地开发版是 **0.5.1**（新增移动云盘 auth 登录；0.5.0 已有 LLRT 版签到 + 评论 + 随机任务间隔）。
 
 ## 安装
 
@@ -322,7 +337,7 @@ POST https://app.pd.nf.migu.cn/user/api/comment/add/v2.0
 差异有 200 多处且不机械，所以 **单独维护一份源**（`llrt/`），不做构建期转换。
 
 ```text
-llrt/mgmusic.js                       0.4.x 源（0.3.4 那份仍在仓库根，老面板照用）
+llrt/mgmusic.js                       0.4.x 源（0.5.x；0.3.x 那份仍在仓库根，老面板照用）
 llrt/webui/{index.html,style.css,app.js,boot.js}
 scripts/build-panelllrt.mjs           llrt/ → dist/panel-llrt/{mgmusic.js, mgmusic.webui/}
 scripts/deploy-panel.sh               dist/ → 面板实例的 plugins/（含样式门禁 + 逐个 cmp）
@@ -347,7 +362,7 @@ bash scripts/deploy-panel.sh --restart                        # 装完顺手重�
 
 ## 发布（面板 0.4 的 zip，0.5.0 起）
 
-资产名 `mgmusic-plugin-<version>-panel04.zip`（当前 **0.5.0**），挂在
+资产名 `mgmusic-plugin-<version>-panel04.zip`（当前 **0.5.1**），挂在
 <https://github.com/asunajs/mgmusic-plugin/releases>；同目录还有 `.sha256`。
 
 ```bash
