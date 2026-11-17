@@ -90,7 +90,7 @@ uid / deviceid / ce 由短信登录或 App 同步自动维护，不需要用户�
 也可以手动下载 [`mgmusic-plugin-0.1.1.zip`](https://github.com/asunajs/mgmusic-plugin/releases/download/v0.1.1/mgmusic-plugin-0.1.1.zip)
 后在「插件管理 → 上传」里安装。
 
-> 本地开发版是 **0.5.1**（新增移动云盘 auth 登录；0.5.0 已有 LLRT 版签到 + 评论 + 随机任务间隔）。
+> 本地开发版是 **0.5.2**（0.5.2 只补清单 `version` 字段；0.5.1 新增移动云盘 auth 登录；0.5.0 已有 LLRT 版签到 + 评论 + 随机任务间隔）。
 
 ## 安装
 
@@ -362,7 +362,7 @@ bash scripts/deploy-panel.sh --restart                        # 装完顺手重�
 
 ## 发布（面板 0.4 的 zip，0.5.0 起）
 
-资产名 `mgmusic-plugin-<version>-panel04.zip`（当前 **0.5.1**），挂在
+资产名 `mgmusic-plugin-<version>-panel04.zip`（当前 **0.5.2**），挂在
 <https://github.com/asunajs/mgmusic-plugin/releases>；同目录还有 `.sha256`。
 
 ```bash
