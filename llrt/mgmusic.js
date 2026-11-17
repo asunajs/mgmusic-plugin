@@ -61,7 +61,7 @@
 //   · 咪咕接口对 Accept-Encoding 敏感，统一 identity，避免 gzip 无法解
 import host from 'panel:host';
 
-const VERSION = '0.5.4';
+const VERSION = '0.5.5';
 const PLUGIN = 'mgmusic';
 const API = '/plugins/mgmusic/api'; // 老面板用它拼 register_route；0.4.x 由 evt.rel 分发，这里只作说明
 const RUN_BUDGET_MS = 100000; // 面板 cron 预算 120s，内部留 20s 收尾
@@ -158,9 +158,10 @@ const DEFAULT_CERT_PREFIX = '308202333082019ca00302010202044d';
 // 任务窗口（小时，左闭右开）；null = 全天可报
 const REPORT_TASKS = [
     ['qsq', '每日浏览社区频道', 8, null],
-    // 2026-11-17：'zyd-sign'（前往中国移动APP）与 'noon-check'（每日饭点打卡）上游已经没有这两个任务，
-    // 上报一律回 200013「暂无法参与」，每天把整条 daily 判成失败。用户确认「这两个任务不存在」，去掉。
-    ['night-check', '每日晚安打卡', 3, [22, 23]],
+    // 2026-11-17：'zyd-sign'（前往中国移动APP）、'noon-check'（每日饭点打卡）、
+    // 'night-check'（每日晚安打卡）上游都已经没有这三个任务了，上报一律回 200013「暂无法参与」，
+    // 于是每天把整条 daily 判成失败并推一条失败通知。用户确认「这些任务不存在」，全部去掉，
+    // 只留真能上报成功的「每日浏览社区频道」。
 ];
 
 // 「每日评论任意歌曲」任务 id；评论是 App 侧评论事件记账，不走 task-report。
