@@ -29,7 +29,7 @@
          <p-dialog>）：控件外观和面板同源，改面板就等于改这里。
          两个 defer 的先后就是执行顺序：套件先注册元素，app.js 再用它们。 -->
     <script src="/ui.js" defer></script>
-    <script src="app.js?v=1" defer></script>
+    <script src="app.js?v=2" defer></script>
   </head>
   <body>
     <!--
@@ -64,6 +64,7 @@
           <h2 class="card-title">账号</h2>
           <span id="account-summary" class="chip">正在读取账号…</span>
           <div class="head-actions">
+            <p-button id="link-sync">从云盘同步</p-button>
             <p-button variant="primary" id="add-account">添加账号</p-button>
           </div>
         </div>
@@ -244,22 +245,33 @@
         </p-field>
         <p class="hint" id="login-hint"></p>
 
-        <p class="hint">或者：粘贴移动云盘登录态里的 Authorization，直接换咪咕登录，不用短信。</p>
+        <!-- 云盘联动：账号直接从云盘插件那拿（那边维护续期，这边不用贴 auth） -->
+        <p class="hint" id="link-hint">
+          移动云盘那边已经登录的账号，可以直接同步过来，不用短信。
+        </p>
+        <ul id="link-list" class="acct link-list"></ul>
+        <p-empty id="link-empty" text="正在读云盘账号…"></p-empty>
 
-        <p-field label="移动云盘 Authorization">
-          <input
-            id="cloud-auth"
-            class="input"
-            type="password"
-            autocomplete="off"
-            spellcheck="false"
-            placeholder="Basic ... 或 pc:手机号:token"
-          />
-        </p-field>
-        <p class="hint">只在本机插件里换票据，不会保存这段 Authorization。</p>
+        <details class="advanced">
+          <summary>手动兜底：粘贴云盘 Authorization</summary>
+          <p class="hint">
+            只有云盘插件没装、或某个号被禁用联动时才需要。只在本机插件里换票据，
+            不会保存这段 Authorization。
+          </p>
+          <p-field label="移动云盘 Authorization">
+            <input
+              id="cloud-auth"
+              class="input"
+              type="password"
+              autocomplete="off"
+              spellcheck="false"
+              placeholder="Basic ... 或 pc:手机号:token"
+            />
+          </p-field>
+          <p-button id="cloud-login">用云盘授权登录</p-button>
+        </details>
       </div>
       <div class="dialog-actions">
-        <p-button id="cloud-login">用云盘授权登录</p-button>
         <p-button id="login-cancel" variant="ghost">取消</p-button>
         <p-button id="login" variant="primary">登录并保存</p-button>
       </div>

@@ -28,7 +28,7 @@
 
 // 页面版本号：和 style.css 里的 --style-ver 一起人工递增。
 // ?diag=1 的自检块读它 —— 用来分辨「CSS 是新的、JS 还是旧的」这种半新半旧状态。
-document.documentElement.dataset.appVer = '1';
+document.documentElement.dataset.appVer = '2';
 
 /** 插件自己的接口（和老面板一字不差）。 */
 const API = '/plugins/mgmusic/api';
@@ -277,7 +277,8 @@ function renderAccounts() {
     sub.className = 'acct-sub';
     const topup = Number(dev.topup_min === undefined ? cfg.topup_min : dev.topup_min) || 0;
     sub.textContent = '听歌补报 ' + topup + ' 分钟'
-      + (dev.cookie ? ' · 已保存会话 cookie' : ' · 暂无会话 cookie');
+      + (dev.cookie ? ' · 已保存会话 cookie' : ' · 暂无会话 cookie')
+      + (String(dev.source || '') === 'mcloud-auth' ? ' · 凭据跟着移动云盘走' : '');
     main.appendChild(sub);
 
     const actions = document.createElement('div');
@@ -398,6 +399,7 @@ function openLoginDialog() {
   setHint('login-hint', '', '');
   $('login-dialog').setAttribute('open', '');
   $('login-phone').focus();
+  void renderLinkList();
 }
 
 function closeLoginDialog() {
@@ -504,6 +506,124 @@ async function doCloudLogin() {
   }
 }
 
+
+// ──────────────────────────────────────────────────────────── 云盘联动
+//
+// 用户口径（2026-11-17）：「咪咕能利用云盘的配置生成账号，并且账号直接从云盘那拿」；
+// 「禁用就是跳过该账号从 mcloud 联动」。
+//
+// 三件事：清单（GET /link）、同步（POST /link/sync）、禁用/启用（POST /link）。
+// ⚠ 「禁用」**只跳过联动**，不删咪咕里已有的账号 —— 所以按钮文案是「禁用 / 启用」，
+//   而不是「删除」。
+
+/** 渲染弹窗里那张「云盘账号」清单。读不到就说清为什么（云盘插件没装 / 没账号）。 */
+async function renderLinkList() {
+  const list = $('link-list');
+  const empty = $('link-empty');
+  if (!list || !empty) return;
+  list.textContent = '';
+  empty.hidden = true;
+  let data;
+  try {
+    data = await call('/link');
+  } catch (e) {
+    setHint('link-hint', 'error', '读不到云盘账号：' + e.message);
+    empty.textContent = '云盘联动不可用（短信登录照旧可用）';
+    empty.hidden = false;
+    return;
+  }
+  if (!data.available) {
+    setHint('link-hint', 'error', data.reason || '读不到云盘账号');
+    empty.textContent = '云盘联动不可用（短信登录照旧可用）';
+    empty.hidden = false;
+    return;
+  }
+  const accounts = Array.isArray(data.accounts) ? data.accounts : [];
+  setHint('link-hint', '', accounts.length
+    ? '移动云盘里 ' + accounts.length + ' 个账号，可以点「同步」拉过来；不想联动的点「禁用」。'
+    : '移动云盘插件里还没有账号（先去那边加一个）。');
+  if (!accounts.length) {
+    empty.textContent = '云盘还没有账号';
+    empty.hidden = false;
+    return;
+  }
+  accounts.forEach((acc) => {
+    const li = document.createElement('li');
+    li.className = 'acct-item';
+    const main = document.createElement('div');
+    main.className = 'acct-main';
+    const title = document.createElement('div');
+    title.className = 'acct-title';
+    const name = document.createElement('strong');
+    name.textContent = acc.label || acc.msisdn || acc.id;
+    const tone = acc.disabled ? 'warn' : (acc.linked ? 'accent' : 'idle');
+    const badge = document.createElement('span');
+    badge.className = 'badge ' + tone;
+    badge.textContent = acc.disabled ? '已禁用联动' : (acc.linked ? '已同步' : '未同步');
+    title.appendChild(name);
+    title.appendChild(badge);
+    main.appendChild(title);
+    const meta = document.createElement('div');
+    meta.className = 'acct-meta';
+    meta.textContent = [
+      acc.msisdn ? ('手机号 ' + acc.msisdn) : '手机号未知',
+      acc.linked ? ('uid ' + (acc.uid || '?')) : '未同步到咪咕',
+      acc.broken ? '云盘那条 auth 解析不出手机号' : '',
+    ].filter(Boolean).join(' · ');
+    main.appendChild(meta);
+    const actions = document.createElement('div');
+    actions.className = 'acct-actions';
+    if (!acc.linked && !acc.disabled) {
+      const sync = smallButton('同步', '', () => doLinkSync());
+      actions.appendChild(sync);
+    }
+    const toggle = smallButton(acc.disabled ? '启用' : '禁用', acc.disabled ? '' : 'danger',
+      () => doLinkToggle(acc.id, !acc.disabled));
+    actions.appendChild(toggle);
+    li.appendChild(main);
+    li.appendChild(actions);
+    list.appendChild(li);
+  });
+}
+
+/** 一键把云盘账号同步成咪咕账号（禁用的会被跳过；幂等）。 */
+async function doLinkSync() {
+  const btn = $('link-sync');
+  return withBusy(btn, '同步中…', async () => {
+    const data = await call('/link/sync', { method: 'POST', write: true, body: {} });
+    showLines(data.lines || []);
+    await loadAll();
+    void renderLinkList();
+    if (data.available === false) {
+      setHint('login-hint', 'error', data.reason || '读不到云盘账号');
+      setState('warn', '云盘读不到');
+      return data;
+    }
+    const c = data.counts || {};
+    setState('ok', '已同步');
+    setRunBadge('ok', '云盘 +' + (c.added || 0) + ' / 认回 ' + (c.adopted || 0));
+    return data;
+  });
+}
+
+/** 禁用 / 启用某一条云盘账号（只改联动名单，**不删**咪咕里已有的账号）。 */
+async function doLinkToggle(id, disabled) {
+  try {
+    const data = await call('/link', { method: 'POST', write: true, body: { id: id, disabled: disabled } });
+    await loadAll();
+    if (data && data.accounts) {
+      // 复用上一次的清单数据，省一次 GET
+      const list = $('link-list');
+      if (list) list.textContent = '';
+    }
+    await renderLinkList();
+    setHint('login-hint', '', disabled
+      ? '已禁用联动：这个号不会再从云盘同步（已同步的账号保持原样照旧跑）'
+      : '已恢复联动：下次同步会重新跟随云盘');
+  } catch (e) {
+    setHint('login-hint', 'error', e.message);
+  }
+}
 // ──────────────────────────────────────────────────────────── 单账号设置
 
 function openAccountDialog(index) {
@@ -837,6 +957,7 @@ function diag() {
 
 $('refresh').addEventListener('click', loadAll);
 $('add-account').addEventListener('click', openLoginDialog);
+$('link-sync').addEventListener('click', doLinkSync);
 $('login-cancel').addEventListener('click', closeLoginDialog);
 $('account-cancel').addEventListener('click', closeAccountDialog);
 $('account-save').addEventListener('click', saveAccount);

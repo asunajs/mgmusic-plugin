@@ -60,8 +60,13 @@
 //   · 所有接口幂等；重复 report 无副作用
 //   · 咪咕接口对 Accept-Encoding 敏感，统一 identity，避免 gzip 无法解
 import host from 'panel:host';
+// ⚠ 这两个是**唯一**新增的 node 依赖（0.4.x 的 LLRT 内置模块，无沙箱）：
+//   用来只读云盘插件的账号表 —— 见「移动云盘联动」那一节。
+//   注意 LLRT 的 `node:fs` **没有 existsSync**，所以一次性判定要走 statSync + try/catch。
+import { readFileSync, statSync } from 'node:fs';
+import { dirname, join } from 'node:path';
 
-const VERSION = '0.5.5';
+const VERSION = '0.6.0';
 const PLUGIN = 'mgmusic';
 const API = '/plugins/mgmusic/api'; // 老面板用它拼 register_route；0.4.x 由 evt.rel 分发，这里只作说明
 const RUN_BUDGET_MS = 100000; // 面板 cron 预算 120s，内部留 20s 收尾
@@ -169,6 +174,10 @@ const COMMENT_TASK_ID = 'c840d039adfd4c04920d92c04120baa8';
 
 const DEFAULTS = {
     devices: [],
+    // 云盘联动里**被禁用**的账号（云盘账号 id 或手机号）。
+    // 语义只有一条：**跳过该账号从 mcloud 联动**（不建、不更新、不重换票）；
+    // 已经存在的咪咕账号原样保留照旧跑 —— 禁用不是删除（用户口径 2026-11-17）。
+    link_disabled: [],
     topup_min: 30,
     report_ms: 60000,
     timeout_ms: 15000,
@@ -837,9 +846,15 @@ function parseMcloudAuth(raw) {
     };
 }
 
-function importMcloudAuth(rawAuth, label) {
+/** 云盘 auth → 咪咕身份：**唯一**做换票的地方（手贴、同步、重换票都走它）。
+ *
+ *  两发照抓包：① `querySpecTokenV2{toSourceId:012008}` 铸票；
+ *             ② `token-validate?token=ANDT<票>&type=2&sourceId=220029` 换 userId。
+ *
+ *  `deviceid` 传空 ⇒ 新造一个；传已有的 ⇒ **沿用那台设备**（重换票时不让设备 churn）。
+ *  ⚠ 返回值只带身份（phone/uid/deviceid），**不带也不留**云盘 auth —— 那份每次现读。 */
+function mintAndValidate(rawAuth, cfg, deviceid) {
     const auth = parseMcloudAuth(rawAuth);
-    const cfg = loadConfig();
     const mintHeaders = {
         'content-type': 'application/json;charset=UTF-8',
         authorization: auth.header,
@@ -860,14 +875,14 @@ function importMcloudAuth(rawAuth, label) {
         throw new Error('云盘换票失败：' + msg);
     }
     const temp = String(mint.data.token);
-    const deviceid = uuidV4().toUpperCase();
+    const did = String(deviceid || '').trim() || uuidV4().toUpperCase();
     const query = [
         'token=' + encodeURIComponent('ANDT' + temp),
         'type=2',
         'sourceId=' + encodeURIComponent(MIGU_TOKEN_SOURCE),
     ].join('&');
     const exchangeHeaders = {
-        deviceId: deviceid,
+        deviceId: did,
         origin: 'https://music.migu.cn',
         referer: 'https://music.migu.cn/',
         accept: 'application/json, text/plain, */*',
@@ -882,11 +897,17 @@ function importMcloudAuth(rawAuth, label) {
     }
     const uid = String(exchange.data.userId || '').trim();
     if (!uid || uid === '0') throw new Error('咪咕登录成功但没有返回 userId');
-    const ce = makeCe(uid, auth.phone, deviceid);
+    return { phone: auth.phone, uid: uid, deviceid: did };
+}
+
+function importMcloudAuth(rawAuth, label) {
+    const cfg = loadConfig();
+    const id = mintAndValidate(rawAuth, cfg, '');
+    const ce = makeCe(id.uid, id.phone, id.deviceid);
     const next = saveLoginDevice(
-        auth.phone,
-        uid,
-        deviceid,
+        id.phone,
+        id.uid,
+        id.deviceid,
         ce,
         '',
         String(label || '').trim() || '云盘授权',
@@ -896,19 +917,422 @@ function importMcloudAuth(rawAuth, label) {
         ok: true,
         lines: [
             '[mgmusic] 云盘授权登录成功',
-            '  账号: ' + mask(auth.phone, 3, 4),
-            '  uid: ' + mask(uid, 6, 4),
+            '  账号: ' + mask(id.phone, 3, 4),
+            '  uid: ' + mask(id.uid, 6, 4),
             '  来源: 移动云盘 auth',
             '  已保存 ' + next.devices.length + ' 个账号，可先点「查询状态」确认。',
         ],
         account: {
-            msisdn: mask(auth.phone, 3, 4),
-            uid: mask(uid, 6, 4),
+            msisdn: mask(id.phone, 3, 4),
+            uid: mask(id.uid, 6, 4),
             source: 'mcloud-auth',
         },
     };
 }
 
+// ──────────────────────────────────────────────────────────── 移动云盘联动
+//
+// 用户口径（2026-11-17）：「咪咕那边没有对 auth 的维护，但是云盘这边有，所以
+// 两把联动一下，咪咕能利用云盘的配置生成账号，并且账号直接从云盘那拿」；
+// 「禁用就是跳过该账号从 mcloud 联动」。
+//
+// 所以这一节的定位很窄：**只读**云盘的账号表，把账号变成咪咕身份。
+//   · 不复制、不缓存云盘 auth —— 每次同步/重换票都现读，云盘续期过的就是新的；
+//   · 不写云盘那边的任何文件（一个字节都不写）；
+//   · 禁用（`link_disabled`）的账号整段跳过：不新建、不更新、**不重换票**，
+//     已经存在的那台账号**原样保留**照旧跑（用户口径：禁用 ≠ 删除）。
+//
+// 路径是面板仓里**已经写明的约定**（mcloud-plugin/docs/architecture.md §3：
+// 「另三个插件用 join(dirname(自己的 data_dir), 'mcloud') 指过去」）。
+
+/** 云盘账号表在 `shared.json` 里的键（mcloud 的 `STATE_ACCOUNTS`）。 */
+const MCLOUD_ACCOUNTS_KEY = 'mcloud.accounts';
+/** 只给 CI / 排查用的覆盖口子：指向一份 shared.json（或一个不存在的路径，用来跑反向例）。 */
+const MCLOUD_STORE_ENV = 'MGMUSIC_MCLOUD_STORE';
+
+/** 自己的数据目录（加载期算一次）。空串 = 算不出来 ⇒ 联动不可用（短信账号照旧）。 */
+let MY_DATA_DIR = null;
+async function initMcloudStore() {
+    try {
+        MY_DATA_DIR = String((await host.plugin_data_dir()) || '');
+    } catch (e) {
+        MY_DATA_DIR = '';
+        warn('[' + PLUGIN + '] 拿不到 plugin_data_dir，云盘联动不可用：'
+            + (e && e.message ? e.message : e));
+    }
+}
+
+function mcloudStoreFile() {
+    let override = '';
+    try {
+        if (typeof process !== 'undefined' && process && process.env) {
+            override = String(process.env[MCLOUD_STORE_ENV] || '').trim();
+        }
+    } catch (e) {
+        override = '';
+    }
+    if (override) return override;
+    if (!MY_DATA_DIR) return '';
+    return join(dirname(MY_DATA_DIR), 'mcloud', 'shared.json');
+}
+
+/** 读不到 ≠ 没有账号。带 `code` 让调用方**降级**而不是当成空表。 */
+function mcloudUnavailable(reason) {
+    const e = new Error('读不到云盘账号：' + reason);
+    e.code = 'MCLOUD_UNAVAILABLE';
+    return e;
+}
+
+/** 解析 shared.json 的文本 → 云盘账号清单。**纯函数**（自检/排查可以直接喂字符串）。
+ *
+ *  滤掉三类：`disabled === true`（云盘那边停用的）、缺 id/auth 的、形状不对的元素。
+ *  手机号解析不出来的**保留**（`broken: true`）：界面上要看得见它，才能禁用它。 */
+function parseMcloudAccounts(text) {
+    let doc;
+    try {
+        doc = JSON.parse(String(text));
+    } catch (e) {
+        throw mcloudUnavailable('shared.json 不是合法 JSON');
+    }
+    if (!doc || typeof doc !== 'object' || Array.isArray(doc)) {
+        throw mcloudUnavailable('shared.json 形状不对');
+    }
+    const raw = doc[MCLOUD_ACCOUNTS_KEY];
+    if (raw === undefined || raw === null || String(raw).trim() === '') return [];
+    let list;
+    try {
+        list = JSON.parse(String(raw));
+    } catch (e) {
+        throw mcloudUnavailable('账号表不是合法 JSON');
+    }
+    if (!Array.isArray(list)) throw mcloudUnavailable('账号表不是数组');
+    const out = [];
+    for (let i = 0; i < list.length; i += 1) {
+        const item = list[i];
+        if (!item || typeof item !== 'object' || Array.isArray(item)) continue;
+        const id = String(item.id || '').trim();
+        const auth = String(item.auth || '').trim();
+        if (!id || !auth || item.disabled === true) continue;
+        let phone = '';
+        try {
+            phone = parseMcloudAuth(auth).phone;
+        } catch (e) {
+            phone = '';
+        }
+        out.push({
+            id: id,
+            label: String(item.label || '').trim(),
+            auth: auth,
+            phone: phone,
+            broken: phone === '',
+        });
+    }
+    return out;
+}
+
+/** 读云盘账号表（只读）。读不到 ⇒ 抛 `MCLOUD_UNAVAILABLE`。 */
+function readMcloudAccounts() {
+    const file = mcloudStoreFile();
+    if (!file) throw mcloudUnavailable('宿主没给数据目录');
+    try {
+        statSync(file); // ⚠ LLRT 的 node:fs **没有 existsSync**（见文件头的契约差异）
+    } catch (e) {
+        throw mcloudUnavailable('云盘插件的账号表不在（' + file + '）');
+    }
+    let text;
+    try {
+        text = String(readFileSync(file, 'utf8'));
+    } catch (e) {
+        throw mcloudUnavailable('账号表读不出来（' + (e && e.message ? e.message : e) + '）');
+    }
+    return parseMcloudAccounts(text);
+}
+
+/** 禁用的账号（云盘账号 id 或手机号）。归一：去空、去重、只留字符串。 */
+function linkDisabledList(cfg) {
+    const raw = (cfg && cfg.link_disabled) || [];
+    const out = [];
+    if (Array.isArray(raw)) {
+        for (let i = 0; i < raw.length; i += 1) {
+            const s = String(raw[i] || '').trim();
+            if (s && out.indexOf(s) < 0) out.push(s);
+        }
+    }
+    return out;
+}
+
+/** 这条云盘账号被禁用了没有 —— 按 id **或**手机号认。
+ *  ⚠ 两个都要认：云盘那边有 `anon-xxxx` 这种 id（与手机号不同值），只认 id 会被绕过。 */
+function isLinkDisabled(cfg, acc) {
+    const list = linkDisabledList(cfg);
+    for (let i = 0; i < list.length; i += 1) {
+        if (list[i] === acc.id) return true;
+        if (acc.phone && list[i] === acc.phone) return true;
+    }
+    return false;
+}
+
+/** 这条云盘账号在 devices 里的下标：**先按 mcloudId，再按手机号**。
+ *
+ *  ⚠ 手机号那一步是必须的：老账号（短信登录建的 / 手贴 auth 建的）没有 mcloudId，
+ *  只按 id 找会再造一台重复账号 —— 那正是「同一个号两条记录」的老毛病。 */
+function findLinkIndex(cfg, acc) {
+    for (let i = 0; i < cfg.devices.length; i += 1) {
+        const d = cfg.devices[i];
+        if (d && d.mcloudId && String(d.mcloudId) === acc.id) return i;
+    }
+    if (!acc.phone) return -1;
+    for (let i = 0; i < cfg.devices.length; i += 1) {
+        const d = cfg.devices[i];
+        if (d && String(d.msisdn || '') === acc.phone) return i;
+    }
+    return -1;
+}
+
+/** 把云盘账号同步成咪咕账号（**幂等**）。
+ *
+ *  三种结果：新建 / 认回（已有身份，0 请求）/ 换票（缺身份才发那两发）。
+ *  禁用的一律跳过；云盘那边「停用」的已经在 `readMcloudAccounts` 里滤掉了。
+ *  ⚠ **不删任何账号**：云盘那边没有了的号，咪咕这边原样留着（「云盘暂时读不到」和
+ *    「云盘真删了」在文件层面长得一样，照它删就是数据事故）。 */
+function syncFromMcloud() {
+    let accounts;
+    try {
+        accounts = readMcloudAccounts();
+    } catch (e) {
+        if (e && e.code === 'MCLOUD_UNAVAILABLE') {
+            const line = '[mgmusic] ' + (e.message || '读不到云盘账号');
+            warn(line);
+            return { ok: false, available: false, reason: e.message, lines: [line] };
+        }
+        throw e;
+    }
+    const cfg = loadConfig();
+    const lines = [];
+    let added = 0;
+    let adopted = 0;
+    let minted = 0;
+    let skipped = 0;
+    let failed = 0;
+    let touched = false;
+    for (let i = 0; i < accounts.length; i += 1) {
+        const acc = accounts[i];
+        const name = acc.label || (acc.phone ? mask(acc.phone, 3, 4) : acc.id);
+        if (isLinkDisabled(cfg, acc)) {
+            skipped += 1;
+            continue;
+        }
+        if (acc.broken) {
+            failed += 1;
+            lines.push('  ' + name + '：云盘那条 auth 解析不出手机号，跳过（去云盘插件重新登录）');
+            continue;
+        }
+        const idx = findLinkIndex(cfg, acc);
+        if (idx >= 0) {
+            const dev = cfg.devices[idx];
+            const already = String(dev.mcloudId || '') === acc.id && dev.source === 'mcloud-auth';
+            if (!already) {
+                dev.mcloudId = acc.id;
+                dev.source = 'mcloud-auth';
+                touched = true;
+                if (!dev.uid || !dev.ce) {
+                    try {
+                        const id = mintAndValidate(acc.auth, cfg, String(dev.deviceid || ''));
+                        dev.uid = id.uid;
+                        dev.deviceid = id.deviceid;
+                        dev.ce = makeCe(id.uid, acc.phone, id.deviceid);
+                        if (!dev.msisdn) dev.msisdn = acc.phone;
+                        minted += 1;
+                        lines.push('  ' + name + '：认回并补齐身份（换票）');
+                    } catch (e) {
+                        failed += 1;
+                        lines.push('  ' + name + '：换票失败 ' + (e && e.message ? e.message : e));
+                    }
+                    continue;
+                }
+                lines.push('  ' + name + '：认回已有账号 ' + deviceLabel(dev, idx));
+            }
+            adopted += 1;
+            continue;
+        }
+        try {
+            const id = mintAndValidate(acc.auth, cfg, '');
+            cfg.devices.push({
+                label: acc.label || ('migu-' + String(acc.phone).slice(-4)),
+                msisdn: acc.phone,
+                uid: id.uid,
+                deviceid: id.deviceid,
+                ce: makeCe(id.uid, acc.phone, id.deviceid),
+                cookie: '',
+                source: 'mcloud-auth',
+                mcloudId: acc.id,
+                topup_min: cfg.topup_min,
+            });
+            added += 1;
+            touched = true;
+            lines.push('  ' + name + '：新建账号');
+        } catch (e) {
+            failed += 1;
+            lines.push('  ' + name + '：换票失败 ' + (e && e.message ? e.message : e));
+        }
+    }
+    if (touched) saveConfig(cfg);
+    const head = '[mgmusic] 云盘同步：' + accounts.length + ' 个号（禁用 ' + skipped + '）'
+        + ' ⇒ 新建 ' + added + ' / 认回 ' + adopted + ' / 换票 ' + minted
+        + (failed ? (' / 失败 ' + failed) : '');
+    return {
+        ok: failed === 0,
+        available: true,
+        lines: [head].concat(lines),
+        counts: {
+            total: accounts.length,
+            added: added,
+            adopted: adopted,
+            minted: minted,
+            skipped: skipped,
+            failed: failed,
+        },
+    };
+}
+
+/** 重换票：拿云盘**当前**的凭据，把这台设备重铸一遍身份。
+ *
+ *  只在联动账号跑挂时用（见 `relinkIfLinked`）。禁用的一律不换 —— 用户口径是
+ *  「跳过该账号从 mcloud 联动」，那就包括不向云盘要东西。 */
+function relinkDevice(cfg, dev) {
+    const accounts = readMcloudAccounts();
+    let acc = null;
+    for (let i = 0; i < accounts.length; i += 1) {
+        const one = accounts[i];
+        if (dev.mcloudId && one.id === String(dev.mcloudId)) { acc = one; break; }
+    }
+    if (!acc) {
+        const phone = String(dev.msisdn || '');
+        for (let i = 0; i < accounts.length; i += 1) {
+            if (phone && accounts[i].phone === phone) { acc = accounts[i]; break; }
+        }
+    }
+    if (!acc) throw new Error('云盘账号表里没有这个号（可能被删了）');
+    if (isLinkDisabled(cfg, acc)) throw new Error('这个号在云盘联动里被禁用了');
+    const id = mintAndValidate(acc.auth, cfg, String(dev.deviceid || ''));
+    dev.uid = id.uid;
+    dev.deviceid = id.deviceid;
+    dev.ce = makeCe(id.uid, acc.phone, id.deviceid);
+    if (!dev.msisdn) dev.msisdn = acc.phone;
+    dev.source = 'mcloud-auth';
+    dev.mcloudId = acc.id;
+    return acc;
+}
+
+/** 跑挂了先自救一次：联动账号 ⇒ 重换票 + 重试一次，返回重试的结果（没救就返回 null）。
+ *
+ *  三不要：短信账号不碰、禁用账号不碰（`relinkDevice` 会拒）、每台每轮最多一次。
+ *  重换票会造新会话，而抓包 §6.1 明写「票据重放/会话叠加**未测**」⇒ 绝不预防性换。 */
+function relinkIfLinked(cfg, dev, index, attempt, fn) {
+    if (!dev || dev.source !== 'mcloud-auth' || attempt.relinked) return null;
+    try {
+        relinkDevice(cfg, dev);
+    } catch (e) {
+        error('[' + deviceLabel(dev, index) + '] 重换票失败：' + (e && e.message ? e.message : e));
+        return null;
+    }
+    attempt.relinked = true;
+    saveConfig(cfg);
+    info('[' + deviceLabel(dev, index) + '] 用云盘最新凭据重换票成功（uid '
+        + mask(String(dev.uid || ''), 6, 4) + '），重试一次');
+    return fn();
+}
+
+/** 身份校验 + 一次自救：联动账号校验不过 ⇒ 用云盘最新凭据重换票，再校验一次。
+ *
+ *  为什么盯「身份校验」这一处：咪咕那边登录态失效时，最先崩的就是它
+ *  （`getMyPage` 拿不到 userId / uid 对不上）。短信账号不做任何手脚。 */
+function ensureIdentity(cfg, dev, index) {
+    try {
+        return assertIdentity(dev, cfg);
+    } catch (e) {
+        if (!dev || dev.source !== 'mcloud-auth') throw e;
+        try {
+            relinkDevice(cfg, dev);
+        } catch (e2) {
+            error('[' + deviceLabel(dev, index) + '] 重换票失败：' + (e2 && e2.message ? e2.message : e2));
+            throw e;
+        }
+        saveConfig(cfg);
+        info('[' + deviceLabel(dev, index) + '] 身份校验失败，已用云盘最新凭据重换票，重试一次');
+        return assertIdentity(dev, cfg);
+    }
+}
+
+/** 同步版本的自救包装（签到 / 查询这些同步步骤机用它）：
+ *  跑挂了且是联动账号 ⇒ 重换票 + 重试一次；重试还不行就把**原来的**错抛出去。 */
+function withRelinkSync(cfg, dev, index, fn) {
+    try {
+        return fn();
+    } catch (e) {
+        const again = relinkIfLinked(cfg, dev, index, { relinked: false }, fn);
+        if (again !== null && again !== undefined) return again;
+        throw e;
+    }
+}
+
+/** 联动清单（界面「云盘账号」那张卡用）：每条带 linked / disabled / broken 三个判据。 */
+function linkReport() {
+    const cfg = loadConfig();
+    let accounts = null;
+    let reason = '';
+    try {
+        accounts = readMcloudAccounts();
+    } catch (e) {
+        if (e && e.code === 'MCLOUD_UNAVAILABLE') {
+            reason = e.message;
+        } else {
+            throw e;
+        }
+    }
+    const out = {
+        ok: true,
+        available: accounts !== null,
+        reason: reason,
+        file: mcloudStoreFile(),
+        disabled: linkDisabledList(cfg),
+        accounts: [],
+    };
+    if (accounts === null) return out;
+    for (let i = 0; i < accounts.length; i += 1) {
+        const acc = accounts[i];
+        const idx = findLinkIndex(cfg, acc);
+        const dev = idx >= 0 ? cfg.devices[idx] : null;
+        out.accounts.push({
+            id: acc.id,
+            label: acc.label,
+            msisdn: acc.phone ? mask(acc.phone, 3, 4) : '',
+            linked: !!(dev && dev.uid && dev.ce),
+            deviceLabel: dev ? deviceLabel(dev, idx) : '',
+            uid: dev && dev.uid ? mask(String(dev.uid), 6, 4) : '',
+            disabled: isLinkDisabled(cfg, acc),
+            broken: acc.broken,
+        });
+    }
+    return out;
+}
+
+/** 禁用 / 启用某条云盘账号（只改 `link_disabled`，**不碰 devices**）。 */
+function setLinkDisabled(id, disabled) {
+    const key = String(id || '').trim();
+    if (!key) throw new Error('要给云盘账号的 id');
+    const cfg = loadConfig();
+    const list = linkDisabledList(cfg);
+    const at = list.indexOf(key);
+    if (disabled) {
+        if (at < 0) list.push(key);
+    } else if (at >= 0) {
+        list.splice(at, 1);
+    }
+    cfg.link_disabled = list;
+    saveConfig(cfg);
+    return linkReport();
+}
 function followLoginRedirect(redirectURL, token, cookie) {
     let raw = String(redirectURL || '').trim();
     if (!raw) return { cookie: cookie, uid: '', body: '' };
@@ -1622,7 +2046,8 @@ async function runDevice(dev, cfg, label, started) {
 
     let id;
     try {
-        id = assertIdentity(dev, cfg);
+        // 联动账号在这里会**先自救一次**（见 ensureIdentity）
+        id = ensureIdentity(cfg, dev, 0);
         lines.push('[' + label + '] 身份: uid=' + mask(id.uid, 6, 4)
             + (id.nick ? (' nick=' + id.nick) : ''));
         progress(label, '身份校验通过');
@@ -1760,7 +2185,18 @@ function logLines(lines) {
 
 async function runDaily() {
     const started = Date.now();
-    const cfg = loadConfig();
+    // ⓪ 先跟云盘对一次账号（禁用的跳过）。**只为「云盘新增的号自动跟上」**：
+    //   已有身份的账号一次请求都不发（见 syncFromMcloud），所以这不是额外的网络负担。
+    //   读不到云盘账号时它自己降级成一行提示，**不会**让 daily 失败。
+    let linkLines = [];
+    try {
+        const linked = syncFromMcloud();
+        linkLines = linked.lines || [];
+        for (let i = 0; i < linkLines.length; i += 1) info(linkLines[i]);
+    } catch (e) {
+        warn('[mgmusic] 云盘同步异常（不影响本趟）：' + (e && e.message ? e.message : e));
+    }
+    const cfg = loadConfig(); // 同步可能改了 devices ⇒ 重读
     if (!cfg.devices.length) {
         const line = '[mgmusic] 未配置 devices，跳过';
         warn(line);
@@ -1836,7 +2272,7 @@ function statusAll(uid) {
         const dev = targets[i];
         const label = deviceLabel(dev, i);
         try {
-            const id = assertIdentity(dev, cfg);
+            const id = ensureIdentity(cfg, dev, i);
             lines.push('[' + label + '] 身份: uid=' + mask(id.uid, 6, 4)
                 + (id.nick ? (' nick=' + id.nick) : ''));
             const st = queryState(dev, cfg);
@@ -1889,7 +2325,7 @@ function signAll(uid) {
         const dev = devices[i];
         const label = deviceLabel(dev, i);
         try {
-            const r = signTask(dev, cfg, label);
+            const r = withRelinkSync(cfg, dev, i, function () { return signTask(dev, cfg, label); });
             for (let j = 0; j < r.lines.length; j += 1) lines.push(r.lines[j]);
             if (!r.ok) failCount += 1;
             if (r.action) signed += 1;
@@ -1965,7 +2401,20 @@ function reportAll(ms) {
 function selftest() {
     const got = mgSign([utf8('hello')], DEFAULT_CERT_PREFIX);
     const want = '0B646EAD2072F5A932D2F0A742BE72ED';
-    return { ok: got === want, got: got, want: want, version: VERSION };
+    // 云盘联动这一层**不联网**也要能自检：账号表读不读得到、每条 auth 能不能解出手机号。
+    // 这两项绿了但账号还是跑不动，才需要怀疑换票那两发的上游行为。
+    let link = { available: false, count: 0, parsed: 0, reason: '', file: mcloudStoreFile() };
+    try {
+        const accounts = readMcloudAccounts();
+        let parsed = 0;
+        for (let i = 0; i < accounts.length; i += 1) {
+            if (!accounts[i].broken) parsed += 1;
+        }
+        link = { available: true, count: accounts.length, parsed: parsed, reason: '', file: link.file };
+    } catch (e) {
+        link.reason = (e && e.message) ? e.message : String(e);
+    }
+    return { ok: got === want, got: got, want: want, version: VERSION, link: link };
 }
 
 // ──────────────────────────────────────────────────────────── 配置读写 / 路由
@@ -2012,6 +2461,20 @@ function validateConfig(input) {
     cfg.task_interval.min_ms = clampInt(cfg.task_interval.min_ms, 0, 15000, DEFAULTS.task_interval.min_ms);
     cfg.task_interval.max_ms = clampInt(cfg.task_interval.max_ms, 0, 15000, DEFAULTS.task_interval.max_ms);
     if (cfg.task_interval.max_ms < cfg.task_interval.min_ms) cfg.task_interval.max_ms = cfg.task_interval.min_ms;
+    // 云盘联动的禁用名单：只留非空字符串、去重。
+    // ⚠ 漏传时**沿用现值**：这个接口是整份替换，旧的界面/脚本不该把用户禁用的号放回来。
+    let skipList = input.link_disabled;
+    if (skipList === undefined) {
+        let prev = {};
+        try {
+            const prevText = stateGet(ST_CONFIG);
+            prev = prevText ? (JSON.parse(prevText) || {}) : {};
+        } catch (e) {
+            prev = {};
+        }
+        skipList = prev.link_disabled;
+    }
+    cfg.link_disabled = linkDisabledList({ link_disabled: skipList });
     cfg.cert = typeof cfg.cert === 'string' ? cfg.cert.trim() : '';
     cfg.tls = cfg.tls === 'native' ? 'native' : '';
     if (cfg.cert && cfg.cert.length < 32) throw new Error('cert 至少 32 个 hex 字符（或留空用内置前缀）');
@@ -2156,10 +2619,23 @@ await host.sidebar({ title: '咪咕音乐', order: 80 });
 // register_web(evt => …)，宿主把 /plugins/mgmusic/** 里没命中静态文件的请求都交给它。
 // 分发键 = method + ' ' + evt.rel（rel 是 /plugins/mgmusic/ 之后那段，例如 'api/config'）。
 // **URL 与 JSON 载荷形状与老面板一致**，前端不用改。
+// ⚠ 必须在注册路由**之前**跑：`plugin_data_dir()` 是 async，而后面所有联动读盘
+// 都是同步的（和老代码的同步步骤机风格一致）⇒ 加载期算一次、缓存住。
+await initMcloudStore();
+
 const WEB_ROUTES = {
     'GET api/config': function () {
         const cfg = loadConfig();
-        return json(200, { ok: true, config: cfg });
+        // `link` 只是给界面看的摘要（**加字段、不改旧字段**）：云盘账号表读不读得到、
+        // 有几条、禁用了哪几个。真正的清单在 GET api/link。
+        let link = { available: false, count: 0, reason: '' };
+        try {
+            const accounts = readMcloudAccounts();
+            link = { available: true, count: accounts.length, reason: '' };
+        } catch (e) {
+            link = { available: false, count: 0, reason: (e && e.message) ? e.message : String(e) };
+        }
+        return json(200, { ok: true, config: cfg, link: link });
     },
     'POST api/config': function (req) {
         const body = parseBody(req);
@@ -2181,9 +2657,27 @@ const WEB_ROUTES = {
         const body = parseBody(req);
         return json(200, loginWithCode(body.msisdn, body.code));
     },
+    // 手贴 auth —— **降级成兜底**（云盘插件没装、或联动里禁用了这个号时用）。
+    // 逻辑一行没改；主路径是下面的 api/link/sync。
     'POST api/cloud-auth': function (req) {
         const body = parseBody(req);
         return json(200, importMcloudAuth(body.auth, body.label));
+    },
+    // 云盘账号清单（每条的 linked / disabled / broken 判据都在这里）。
+    'GET api/link': function () {
+        return json(200, linkReport());
+    },
+    // 禁用 / 启用某一条：`{id, disabled:true|false}`。**只改名单，不碰 devices**。
+    'POST api/link': function (req) {
+        const body = parseBody(req);
+        const id = String((body && body.id) || '').trim();
+        if (!id) throw new Error('要给云盘账号的 id');
+        const disabled = body && body.disabled !== undefined ? !!body.disabled : true;
+        return json(200, setLinkDisabled(id, disabled));
+    },
+    // 同步：把云盘账号变成咪咕账号（禁用的跳过）。幂等 —— 再点一次是 0 新建。
+    'POST api/link/sync': function () {
+        return json(200, syncFromMcloud());
     },
     'GET api/status': function () {
         return json(200, statusAll());

@@ -8,7 +8,7 @@
 #   PANEL_PLUGINS_DIR=/path/to/plugins npm run deploy:panel
 #   PANEL_PLUGINS_DIR=... bash scripts/deploy-panel.sh --restart   # 装完顺手重启 launchd 服务
 #
-# 只做三件事：构建 → 整份拷贝（判据 cmp 逐个核）→ 告诉你怎么让它生效。
+# 只做四件事：自检 → 构建 → 整份拷贝（判据 cmp 逐个核）→ 告诉你怎么让它生效。
 # 不会去改面板的数据目录，更不会碰账号配置（账号在面板库的 state 表里）。
 set -euo pipefail
 
@@ -26,6 +26,8 @@ for arg in "$@"; do
 done
 
 cd "$ROOT"
+# 云盘联动的离线自检（不联网）：同步/幂等/禁用/降级四条口径。挂了就别装。
+node scripts/check-link.mjs
 node scripts/build-panelllrt.mjs
 
 # 样式门禁：面板仓的 check-plugin-style 按 cwd/plugins 扫，所以拿产物在临时目录里摆成插件目录

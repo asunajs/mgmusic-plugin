@@ -28,6 +28,9 @@ const must = [
   ["import host from 'panel:host'", '宿主契约：panel:host'],
   ['register_web(', '新面板的 WebUI 分发器'],
   ['sqlite_exec_sync(', 'state 表存储'],
+  // 云盘联动（2026-11-17）：少了这些说明拷的是没有联动的旧版
+  ['function readMcloudAccounts(', '云盘账号表只读'],
+  ["'POST api/link/sync'", '云盘同步路由'],
 ];
 for (const [needle, why] of must) {
   if (!src.includes(needle)) {
@@ -38,6 +41,20 @@ for (const [needle, why] of must) {
 // 0.3.x 的导入语句（注释里提到它没关系，只要没有真 import）
 if (/^import[^\n]*from ['"]host-api['"]/m.test(src)) {
   console.error("❌ llrt/mgmusic.js 里还有 0.3.x 的 `from 'host-api'` 导入");
+  process.exit(1);
+}
+
+// 版本一致性：三处（package.json / llrt/mgmusic.js 的 VERSION / 清单）必须同值。
+// 以前没钉，发版时漂成了 0.5.5 / 0.5.2 / 0.5.5 —— 面板「插件」列表读清单、
+// 界面右下角读 VERSION，两边不一样用户没法判断装的到底是哪版。
+const verInJs = (src.match(/^const VERSION = '([^']+)';$/m) || [])[1];
+const manifest = JSON.parse(readFileSync(join(SRC, 'mgmusic.panel.json'), 'utf8'));
+const verInManifest = String(manifest.version || '');
+if (verInJs !== pkg.version || verInManifest !== pkg.version) {
+  console.error('❌ 版本不一致：package.json=' + pkg.version
+    + ' / llrt/mgmusic.js=' + String(verInJs)
+    + ' / llrt/mgmusic.panel.json=' + verInManifest);
+  console.error('   三处要一起改（面板列表读清单，界面读 VERSION）');
   process.exit(1);
 }
 
