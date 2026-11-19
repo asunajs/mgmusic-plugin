@@ -49,7 +49,6 @@ const S = {
   config: null,
   editing: -1,
   sending: false,
-  sendTimer: null,
   sendPhone: '',
   running: false,
 };
@@ -372,37 +371,24 @@ async function withBusy(btn, busyText, fn) {
 
 // ──────────────────────────────────────────────────────────── 短信登录
 
-function clearSendTimer() {
-  if (S.sendTimer) {
-    clearInterval(S.sendTimer);
-    S.sendTimer = null;
-  }
-}
-
-function setSendButton(text, disabled) {
-  const btn = $('send-code');
-  setBtnText(btn, text);
-  setBtnOff(btn, disabled);
-}
-
 function resetSendState() {
-  clearSendTimer();
+  $('login-phone-code').stopResend();
   S.sendPhone = '';
-  setSendButton('发送验证码', false);
 }
 
 function openLoginDialog() {
   // 每次「添加账号」都从干净状态开始：上一位账号的 60 秒倒计时不能带过来。
-  clearSendTimer();
+  const sms = $('login-phone-code');
   S.sending = false;
   S.sendPhone = '';
-  $('login-phone').value = '';
+  sms.stopResend();
+  sms.value = '';
   $('login-code').value = '';
   $('cloud-auth').value = '';
-  setSendButton('发送验证码', false);
   setHint('login-hint', '', '');
   $('login-dialog').setAttribute('open', '');
-  $('login-phone').focus();
+  const input = sms.querySelector('input');
+  if (input) input.focus();
   void renderLinkList();
 }
 
@@ -413,42 +399,31 @@ function closeLoginDialog() {
 
 async function sendCode() {
   if (S.sending) return;
-  const phone = ($('login-phone').value || '').trim();
+  const sms = $('login-phone-code');
+  const phone = (sms.value || '').trim();
   if (!/^1[3-9]\d{9}$/.test(phone)) {
     setHint('login-hint', 'error', '先填 11 位手机号');
     return;
   }
   S.sending = true;
-  setSendButton('发送中…', true);
+  sms.busy = true;
   setHint('login-hint', '', '正在向 passport 请求验证码…');
   try {
     const data = await post('/login/send', { msisdn: phone });
     setHint('login-hint', '', data.message || '验证码已发送，请查收短信');
     $('login-code').focus();
     S.sendPhone = phone;
-    let left = 60;
-    setSendButton('重发（' + left + 's）', true);
-    clearSendTimer();
-    S.sendTimer = setInterval(() => {
-      left -= 1;
-      if (left <= 0) {
-        clearSendTimer();
-        S.sendPhone = '';
-        setSendButton('发送验证码', false);
-      } else {
-        setSendButton('重发（' + left + 's）', true);
-      }
-    }, 1000);
+    sms.startResend(60);
   } catch (e) {
-    setSendButton('发送验证码', false);
     setHint('login-hint', 'error', e.message);
   } finally {
     S.sending = false;
+    sms.busy = false;
   }
 }
 
 async function doLogin() {
-  const phone = ($('login-phone').value || '').trim();
+  const phone = ($('login-phone-code').value || '').trim();
   const code = ($('login-code').value || '').trim();
   if (!/^1[3-9]\d{9}$/.test(phone)) {
     setHint('login-hint', 'error', '先填 11 位手机号');
@@ -967,7 +942,7 @@ $('link-sync').addEventListener('click', doLinkSync);
 $('login-cancel').addEventListener('click', closeLoginDialog);
 $('account-cancel').addEventListener('click', closeAccountDialog);
 $('account-save').addEventListener('click', saveAccount);
-$('send-code').addEventListener('click', sendCode);
+$('login-phone-code').addEventListener('send', sendCode);
 $('login').addEventListener('click', doLogin);
 $('cloud-login').addEventListener('click', doCloudLogin);
 $('save-settings').addEventListener('click', saveSettings);
@@ -979,17 +954,15 @@ $('comment').addEventListener('click', doComment);
 $('report').addEventListener('click', doReport);
 
 // 换了手机号就解除上一号码的倒计时，让用户能给另一个账号发验证码。
-$('login-phone').addEventListener('input', () => {
-  if (S.sendPhone && ($('login-phone').value || '').trim() !== S.sendPhone) {
+$('login-phone-code').addEventListener('input', () => {
+  const sms = $('login-phone-code');
+  if (S.sendPhone && (sms.value || '').trim() !== S.sendPhone) {
     resetSendState();
     setHint('login-hint', '', '');
   }
 });
 
-// 回车 = 下一步（手机上少点一次键盘）
-$('login-phone').addEventListener('keydown', (e) => {
-  if (e.key === 'Enter') sendCode();
-});
+// 回车由 <p-sms-code> 自己处理（输入框回车 = 点行内「获取验证码」）
 $('login-code').addEventListener('keydown', (e) => {
   if (e.key === 'Enter') doLogin();
 });
