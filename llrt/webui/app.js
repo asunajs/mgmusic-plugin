@@ -117,9 +117,12 @@ function btnText(btn) {
   return b ? b.textContent : '';
 }
 
+/** 改按钮文字：<p-button> 用公开的 .label（第 197 轮加的），普通 <button> 直接用 textContent。
+ *  ⚠ 以前摸的是组件私有的 `btn._btn` —— 面板内部结构一变就断，不该这么写。 */
 function setBtnText(btn, text) {
-  const b = btn && (btn._btn || btn);
-  if (b) b.textContent = text;
+  if (!btn) return;
+  if (btn.tagName === 'P-BUTTON') btn.label = text;
+  else btn.textContent = text;
 }
 
 /** 禁用/启用：<p-button> 和 <button> 都认 .disabled = true。 */

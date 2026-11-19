@@ -101,19 +101,10 @@
 }
 
 /* ── 表单 ──
-   面板的 .field 只画了里面的 select/input，没有画「标签在上、控件在下」这一层，
-   这里补它的布局（<p-field> 内部也是这个 class）。 */
-
-.field {
-  display: flex;
-  flex-direction: column;
-  gap: 5px;
-  min-width: 0;
-}
-
-.field > .input {
-  width: 100%;
-}
+   `.field` 的排布（标签在上、控件在下、控件吃满宽度）面板 /app.css 已经有了 ——
+   第 197 轮收口，四个插件统一用它，这里不再各补一份。
+   ⚠ 以前这里写过 `.field{display:flex…}` + `.field > .input{width:100%}`，那是在补面板的缺口；
+     现在面板补齐了，再留一份就会出现「面板改一次、插件盖回去」的老问题。 */
 
 /* 勾选行：只排布局。⚠ 不要在这里碰 input[type=checkbox] 的 border/background。 */
 .check-row {
