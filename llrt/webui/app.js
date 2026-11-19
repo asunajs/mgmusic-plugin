@@ -329,8 +329,11 @@ async function loadAll() {
   try {
     const data = await call('/config');
     S.config = data.config || {};
+    // 唯一那份配置文件在哪 —— 面板「插件 → 配置」表单写的就是它
+    if (data.config_path) S.configPath = data.config_path;
     renderAll();
     setState('ok', '已连接');
+    setHint('settings-hint', '', S.configPath ? ('配置文件：' + S.configPath) : '');
   } catch (e) {
     setState('err', '读取失败');
     setHint('settings-hint', 'error', '读配置失败：' + e.message);
@@ -341,6 +344,7 @@ async function loadAll() {
 async function saveConfigObject(cfg) {
   const data = await call('/config', { method: 'POST', write: true, body: cfg });
   S.config = data.config || {};
+  if (data.config_path) S.configPath = data.config_path;
   renderAll();
   return data.config;
 }
@@ -710,7 +714,9 @@ async function saveSettings() {
   setHint('settings-hint', '', '保存中…');
   try {
     await saveConfigObject(cfg);
-    setHint('settings-hint', '', '设置已保存');
+    // 写的是唯一那份 config.json：面板「插件 → 配置」页刷新看到的就是这些值，
+    // 插件下一次运行（含定时 daily）直接读文件，不需要重载插件。
+    setHint('settings-hint', '', '已写入 config.json（面板「插件 → 配置」看到的是同一份）');
     setState('ok', '已保存');
   } catch (e) {
     setHint('settings-hint', 'error', e.message);

@@ -188,13 +188,19 @@ node scripts/sync-macos-account.mjs
 
 ## 配置
 
-`<PLUGIN_DATA_DIR>/mgmusic/config.json`：
+**唯一的一份用户配置**：`<PANEL_DATA_DIR>/plugin-data/mgmusic/config.json`（UTF-8 JSON 对象，0600）：
+
+- 面板「插件 → 配置」表单写它（`PUT /api/plugins/mgmusic/config`，面板负责原子写 + 重载插件）；
+- 插件自己的页面写它（`POST /plugins/mgmusic/api/config`，同样是原子写，不重载）；
+- 插件**每次都重新读这个文件**（不缓存），所以谁写完都立刻生效，不存在"内存里还是旧值"。
+
+顶层带 `schema_version`（当前 `1`）。`state` 表只放运行期数据（登录中间态、迁移标记），
+**不再存用户配置** —— 0.4.x～0.6.x 那套「面板 config.json 只播种一次、真值藏在 state 表」的双轨制
+在 0.7.0 里删掉了，升级时自动迁移（见文末「0.7.0 的配置迁移」）。
 
 ```json
 {
-  "app_import": {
-    "enabled": true
-  },
+  "schema_version": 1,
   "devices": [
     {
       "label": "account-1",
@@ -236,8 +242,8 @@ node scripts/sync-macos-account.mjs
 
 | 字段 | 说明 |
 |---|---|
-| `app_import.enabled` | 是否允许从 `app-account.json` / macOS App 自动同步账号（默认 true） |
-| `uid` / `deviceid` / `msisdn` | H5 身份三件套；`deviceid` 必填。`source=app-account.json` 表示由同步脚本写入 |
+| `schema_version` | 配置格式版本，当前 `1`；迁移时由插件补写，不用手填 |
+| `uid` / `deviceid` / `msisdn` | H5 身份三件套；`deviceid` 必填。`source` 只是来源标记（`sms` / `mcloud-auth` 等） |
 | `ce` | 可留空，由 `deviceId + uid + msisdn` 按加法 Vigenère 自铸（2026-11-05 H5 实测顺序，无 `ip`） |
 | `topup_min` | 每账号听歌补报目标（分钟），`0` = 关闭；账号级覆盖全局 |
 | `cookie` | 实测 H5 头有 `mgAppH5CookieId` + `task-session-id`；插件只接受一个字符串，用 `; ` 拼接。领奖/任务上报建议带上，空值未验证 |
@@ -359,11 +365,12 @@ POST https://app.pd.nf.migu.cn/user/api/comment/add/v2.0
 ## 0.4.x（panel-llrt / LLRT）变体
 
 新面板（`panel-llrt`，Rust + LLRT）用的是**另一套宿主契约**：`import host from 'panel:host'`、
-状态存宿主 sqlite 的 `state` 表、WebUI 走 `register_web` + `/app.css` + `<p-*>` 套件。
+用户配置是插件数据目录里的 `config.json`（面板表单与插件页面同源）、运行期数据才走宿主 sqlite 的
+`state` 表、WebUI 走 `register_web` + `/app.css` + `<p-*>` 套件。
 差异有 200 多处且不机械，所以 **单独维护一份源**（`llrt/`），不做构建期转换。
 
 ```text
-llrt/mgmusic.js                       0.4.x 源（0.5.x；0.3.x 那份仍在仓库根，老面板照用）
+llrt/mgmusic.js                       0.4.x 源（0.7.0；0.3.x 那份仍在仓库根，老面板照用）
 llrt/webui/{index.html,style.css,app.js,boot.js}
 scripts/build-panelllrt.mjs           llrt/ → dist/panel-llrt/{mgmusic.js, mgmusic.webui/}
 scripts/deploy-panel.sh               dist/ → 面板实例的 plugins/（含样式门禁 + 逐个 cmp）
@@ -380,8 +387,8 @@ bash scripts/deploy-panel.sh --restart                        # 装完顺手重�
 ```
 
 装完要让它生效：面板界面插件卡点「重载」（只影响这一个插件），或 `--restart` 重启整个服务。
-**不碰账号数据**：账号在面板库的 `state` 表里，迁移走 `plugin-data/mgmusic/config.json` 播种
-（详见 panel-llrt 仓的 `docs/mgmusic-migration.md`）。
+**账号在插件自己的 `config.json` 里**（`plugin-data/mgmusic/config.json`）：重装/重载插件都不会碰它，
+只有删掉这个文件才会回到「没有账号」（详见 panel-llrt 仓的 `docs/mgmusic-migration.md`）。
 
 0.4.x 的行为差异（相对 0.3.x，都是环境层收敛）：任务只有 `daily` 一条（签到/评论/补报走 HTTP 路由）、
 不写任务摘要、不再有「macOS App 账号同步」（0.3.x 那个读 App plist 的选项已删）。
@@ -410,6 +417,21 @@ npm run pack:panel04        # → dist/mgmusic-plugin-<version>-panel04.zip（+ 
 | `report_ms` | number | 60000 | 手动「补报」一次上报多长的听歌时长 |
 | `tls` | select | 空 | 只有默认那条握不上手时才选 `native` |
 
-⚠ **只当播种源**：这四格只在 `mgmusic.config` 还不存在时读一次（新装 / 账号列表为空）。
-之后一切读写走面板的 `state` 表，**文件不再覆盖它** —— 否则「在界面上删光了账号，
-下次加载又被文件复活」。已有账号的安装要改这几格，请在插件自己的界面里改。
+这四格和插件页面写的是**同一份 `config.json`**（0.7.0 起）：面板保存 = 原子写文件 + 重载插件，
+插件下一次运行（含定时 daily）读到的就是新值；反过来在插件页面改完，面板这张表单刷新一下看到的
+也是同一份。表单只覆盖标量，**账号列表不会被动到** —— 面板按清单里的 `fields` 合并，只改声明过的键。
+
+### 0.7.0 的配置迁移
+
+0.6.x 及以前：面板 `config.json` 只在首次加载时「播种」一次，之后真值在宿主 `state` 表的
+`mgmusic.config` 键里。0.7.0 起只有上面那一份文件，升级时插件在**加载期做一次**迁移：
+
+1. 读磁盘 `config.json`（坏 JSON → 原样改名成 `config.json.bad-<时间戳>` 留档，按「没有文件」处理）；
+2. 读旧 `state` 里的 `mgmusic.config`；
+3. 合并：**state 优先、文件补缺**（标量取 state 的、devices 按 `ce` / `uid+msisdn` 并集去重）；
+4. 文件本来就在就先备份 `.bak-migrate-<时间戳>`，再原子写 0600；
+5. 旧 state 收尾：原文存进 `mgmusic.config.legacy`（只读备份，插件不读）→ 删 `mgmusic.config`
+   → 删老的双轨标记 `mgmusic.seed_marker` → 打 `mgmusic.migration_v1`。
+
+**幂等**：`mgmusic.migration_v1` 在就整个跳过。`mgmusic.login_pending`（登录中间态）不参与迁移，
+原样留在 `state` 里。

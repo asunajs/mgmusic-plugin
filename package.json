@@ -1,6 +1,6 @@
 {
   "name": "mgmusic-plugin",
-  "version": "0.6.0",
+  "version": "0.7.0",
   "private": true,
   "type": "module",
   "description": "咪咕音乐金币中心 JS 插件（QuickJS / Node）",
@@ -11,6 +11,7 @@
     "pack": "bash scripts/pack.sh",
     "build:panelllrt": "node scripts/build-panelllrt.mjs",
     "deploy:panel": "bash scripts/deploy-panel.sh",
-    "pack:panel04": "node scripts/pack-panelllrt.mjs"
+    "pack:panel04": "node scripts/pack-panelllrt.mjs",
+    "test:config": "node scripts/test-config.mjs"
   }
 }

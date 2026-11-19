@@ -10,17 +10,16 @@
 //   1. `import {...} from 'host-api'` → `import host from 'panel:host'`。新的注册类 op
 //      全是 async（要 await）；同步步骤机那几处用 `*_sync` 同步版，代码结构没变。
 //      日志级别：success → info、fail → error（0.4.x 只有 log/info/warn/error）。
-//   2. **存储**：老版把 config.json / login-pending.json 写在 cwd 相对路径上；新面板
-//      **不给插件设 cwd**（相对路径会落到面板进程的工作目录），所以改用宿主 sqlite 的
-//      `state` 表（和 mcloud 同一张表，键自带命名空间）：
-//        config.json        → `mgmusic.config`
-//        login-pending.json → `mgmusic.login_pending`
+//   2. **存储（0.7.0 起只有一份用户配置）**：老版把 config.json / login-pending.json 写在
+//      cwd 相对路径上；新面板**不给插件设 cwd**，所以两者都有落点问题。现在的分工是：
+//        用户配置  → `<PANEL_DATA_DIR>/plugin-data/mgmusic/config.json`（**唯一真值**，UTF-8 + 0600）
+//        运行期数据 → 宿主 sqlite 的 `state` 表：`mgmusic.login_pending`（登录中间态）等
 //      表在模块加载期自己建（新面板不预建，CREATE TABLE IF NOT EXISTS 幂等）。
-//   3. **播种**（只在 `mgmusic.config` 不存在时跑一次）：`await host.self_config()` 非空 →
-//      校验后写进 state；空 → DEFAULTS。这是 `plugin-data/<插件>/config.json` 的正式入口：
-//      迁移老账号 = 把老面板的 config.json 复制到
-//      `<PANEL_DATA_DIR>/plugin-data/mgmusic/config.json`。**之后一切读写只走 state**，
-//      那份文件只当导入源，不回写。
+//   3. **面板表单与插件 WebUI 写的是同一个文件**：面板走 `PUT /api/plugins/mgmusic/config`
+//      （原子写 + 0600 + 重载插件），插件 WebUI 走 `POST /plugins/mgmusic/api/config`
+//      （同样是原子写，但不重载）。`loadConfig()` **每次都重新读文件**，所以两边谁写都立刻生效，
+//      不存在"内存里还是旧值"。0.4.x～0.6.x 那套「面板 config.json 只播种一次、真值在 state 表」
+//      的双轨制已经删掉（见下方「迁移」）。
 //   4. **10 条老路由 → 一个 `host.register_web` 分发器**（按 `evt.rel` + `evt.method`）。
 //      URL（`/plugins/mgmusic/api/*`）与 JSON 载荷形状**保持老面板原样**，前端不用改。
 //      注意 WebUI 请求和 cron 共用同一个 busy 锁、插件侧预算是 30s：界面上的「立即跑一次」
@@ -38,16 +37,19 @@
 //      setTimeout 做任务间隔（默认 1–3s），保留；配置里写 >5s 的间隔按 5s 等（唯一一处
 //      时间上的收敛，见 taskPause）。要长等请用 `await host.sleep(ms)`。
 //
-// ── 存储（接手的人看这两句就够）
-//   · 配置与临时数据全在**宿主 sqlite 的 `state` 表**里，三个键：
-//       `mgmusic.config`         ← 老 config.json（账号 devices / topup_min / cert / tls / comment …）
-//       `mgmusic.login_pending`  ← 老 login-pending.json（短信登录中间态；只在成功后删一次）
+// ── 存储（接手的人看这几句就够）
+//   · **用户配置只有一份**：`<PANEL_DATA_DIR>/plugin-data/mgmusic/config.json`
+//     （顶层带 `schema_version`；账号 devices / topup_min / cert / tls / comment / task_interval … 全在里面）。
+//     面板「插件 → 配置」表单、插件自己的 WebUI 都读写它；`loadConfig()` 每次重新读文件。
+//   · **state 表只放运行期数据**：
+//       `mgmusic.login_pending`   ← 短信登录中间态（成功后删一次）
+//       `mgmusic.migration_v1`    ← 一次性迁移标记（不参与日常读写）
+//       `mgmusic.config.legacy`   ← 迁移前那份 state 配置的只读备份（插件不读，留给人回滚）
 //     表由本文件在**加载期**自己建（`CREATE TABLE IF NOT EXISTS state`，幂等；mcloud 也是插件建的）。
-//   · **播种**用 `await host.self_config()`：state 里没有 `mgmusic.config` 时读一次 ——
-//     非空就 validateConfig 后写进 state，空就用 DEFAULTS。迁移老账号的正式通路是
-//     「把老面板的 `.../plugin-data/mgmusic/config.json` 复制到
-//     `<PANEL_DATA_DIR>/plugin-data/mgmusic/config.json` 再重载插件」。
-//     播种之后**只读 state**，那份文件只当导入源，不回写。
+//   · **迁移**（0.6.x → 0.7.0，加载期只跑一次）：旧 state 的 `mgmusic.config` 与磁盘上的
+//     config.json 合并成上面那一份文件（state 优先、文件补缺、devices 按 ce/uid+msisdn 去重）、
+//     先备份再原子写 0600，然后删掉旧的 state 键并打 `migration_v1` 标记。幂等。
+//     老的双轨标记 `mgmusic.seed_marker` 在这次迁移里删除。
 //
 // 任务：
 //   daily  —— 00:05 / 12:05 / 22:05：login-access + qsq + zyd-sign + 窗口打卡
@@ -60,13 +62,15 @@
 //   · 所有接口幂等；重复 report 无副作用
 //   · 咪咕接口对 Accept-Encoding 敏感，统一 identity，避免 gzip 无法解
 import host from 'panel:host';
-// ⚠ 这两个是**唯一**新增的 node 依赖（0.4.x 的 LLRT 内置模块，无沙箱）：
-//   用来只读云盘插件的账号表 —— 见「移动云盘联动」那一节。
-//   注意 LLRT 的 `node:fs` **没有 existsSync**，所以一次性判定要走 statSync + try/catch。
-import { readFileSync, statSync } from 'node:fs';
+// ⚠ 这组是**唯一**的 node 依赖（0.4.x 的 LLRT 内置模块，无沙箱）：
+//   · 配置文件的读写（唯一真值，见「配置文件」那一节）
+//   · 只读云盘插件的账号表 —— 见「移动云盘联动」那一节
+//   注意 LLRT 的 `node:fs`：**没有 copyFileSync / unlinkSync**，`existsSync` 也不可靠 ——
+//   所以备份用「读出来再写」、判定用 statSync + try/catch（2026-11-19 在实例上逐项验过）。
+import { chmodSync, mkdirSync, readFileSync, renameSync, statSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 
-const VERSION = '0.6.0';
+const VERSION = '0.7.0';
 const PLUGIN = 'mgmusic';
 const API = '/plugins/mgmusic/api'; // 老面板用它拼 register_route；0.4.x 由 evt.rel 分发，这里只作说明
 const RUN_BUDGET_MS = 100000; // 面板 cron 预算 120s，内部留 20s 收尾
@@ -94,11 +98,17 @@ function fail(msg) { emitLog('error', msg); }
 //
 // 参数是 JS 数组，返回 {rows, truncated?}。同步版占住本插件的引擎线程 —— 正是老代码要的
 // 「同步步骤机」语义，所以 loadConfig / saveConfig 保持同步、返回形状不变。
-const ST_CONFIG = 'mgmusic.config';
+//
+// ⚠ **这里不再放用户配置**（0.7.0 起）：配置只有一份文件（见「配置文件」一节）。
 const ST_LOGIN_PENDING = 'mgmusic.login_pending';
-// 「播种做过没有」的标记：值 'file'（从 config.json 导入过）或 'state'（本来就有账号）。
-// 有它就不再从导入源覆盖 state —— 否则用户在界面上删光账号会被文件偷偷复活。
-const ST_SEED_MARK = 'mgmusic.seed_marker';
+/** 一次性迁移标记（0.6.x → 0.7.0）。只回答「迁移做过没有」，不参与日常读写。值是 JSON 摘要。 */
+const ST_MIGRATION = 'mgmusic.migration_v1';
+/** 迁移前 state 里那份配置的**只读备份**（插件不读它，留给人回滚/排查）。 */
+const ST_LEGACY_CONFIG = 'mgmusic.config.legacy';
+/** 迁移前的那份 state 配置本体（迁移完就删，所以只用在这一处）。 */
+const ST_LEGACY_STATE_CONFIG = 'mgmusic.config';
+/** 老的双轨标记（「播种做过没有」）。0.7.0 的迁移会把它删掉。 */
+const ST_SEED_MARK_OLD = 'mgmusic.seed_marker';
 
 // 新面板不预建 state（mcloud 也是插件自己建的）。加载期建一次，幂等。
 // updated_at 是 TEXT：写 `String(Date.now())`，和 mcloud 一致。
@@ -950,16 +960,22 @@ const MCLOUD_ACCOUNTS_KEY = 'mcloud.accounts';
 /** 只给 CI / 排查用的覆盖口子：指向一份 shared.json（或一个不存在的路径，用来跑反向例）。 */
 const MCLOUD_STORE_ENV = 'MGMUSIC_MCLOUD_STORE';
 
-/** 自己的数据目录（加载期算一次）。空串 = 算不出来 ⇒ 联动不可用（短信账号照旧）。 */
+/** 自己的数据目录（加载期算一次，谁先要谁算）。空串 = 算不出来 ⇒ 配置读写与联动都不可用。 */
 let MY_DATA_DIR = null;
-async function initMcloudStore() {
+async function initDataDir() {
+    if (MY_DATA_DIR) return MY_DATA_DIR;
     try {
         MY_DATA_DIR = String((await host.plugin_data_dir()) || '');
     } catch (e) {
         MY_DATA_DIR = '';
-        warn('[' + PLUGIN + '] 拿不到 plugin_data_dir，云盘联动不可用：'
-            + (e && e.message ? e.message : e));
+        warn('[' + PLUGIN + '] 拿不到 plugin_data_dir：配置读写与云盘联动都不可用（'
+            + (e && e.message ? e.message : e) + '）');
     }
+    return MY_DATA_DIR;
+}
+/** 云盘账号表要用数据目录 —— 复用 initDataDir()，不重复问宿主。 */
+async function initMcloudStore() {
+    await initDataDir();
 }
 
 function mcloudStoreFile() {
@@ -1473,35 +1489,312 @@ function overBudget(started) {
     return started && Date.now() - started > RUN_BUDGET_MS;
 }
 
-function loadConfig() {
-    let raw;
+// ──────────────────────────────────────────────────────────── 配置文件（唯一真值）
+//
+// 用户配置只有一份：`<PANEL_DATA_DIR>/plugin-data/mgmusic/config.json`（UTF-8 JSON 对象，顶层
+// 带 `schema_version`）。三条写/读通路，落点都是它：
+//   · 面板「插件 → 配置」表单：PUT /api/plugins/mgmusic/config（面板原子写 + 0600 + 重载插件）
+//   · 插件 WebUI：POST /plugins/mgmusic/api/config → saveConfig() → writeConfigFile()（原子写，不重载）
+//   · 云盘联动 / 短信登录：内部 saveConfig()，同上
+// 读只有一条：loadConfig() **每次都重新读文件**（不缓存），所以谁写完都立刻生效 ——
+// 这就是「写配置之后怎么生效」的答案：靠重读，不靠重载；面板保存多一次重载只是顺带。
+const SCHEMA_VERSION = 1;
+
+/** 配置文件路径。拿不到 plugin_data_dir 时返回 ''（此时读写都报错，不再退回 state）。 */
+function configFilePath() {
+    return MY_DATA_DIR ? join(MY_DATA_DIR, 'config.json') : '';
+}
+
+/** 文件在不在。LLRT 的 node:fs 里 existsSync 不可靠，统一用 statSync + try/catch。 */
+function fileExists(path) {
+    if (!path) return false;
     try {
-        // 老版是 config()（读 plugin-data/<插件>/config.json）；0.4.x 读 state 键。
-        const text = stateGet(ST_CONFIG);
-        raw = text ? (JSON.parse(text) || {}) : {};
-        if (!raw || typeof raw !== 'object' || Array.isArray(raw)) raw = {};
+        statSync(path);
+        return true;
     } catch (e) {
-        throw new Error('读取配置失败: ' + (e && e.message ? e.message : e));
+        return false;
     }
-    const cfg = Object.assign({}, DEFAULTS, raw);
+}
+
+/** 读原文件。missing 区分「还没写过」和「读坏了」—— 两者处理方式不同。 */
+function readConfigFile() {
+    const path = configFilePath();
+    if (!path) {
+        return { ok: false, missing: true, path: '', text: '', error: '拿不到 plugin_data_dir' };
+    }
+    if (!fileExists(path)) {
+        return { ok: false, missing: true, path: path, text: '', error: '' };
+    }
+    try {
+        return { ok: true, missing: false, path: path, text: readFileSync(path, 'utf8'), error: '' };
+    } catch (e) {
+        return {
+            ok: false, missing: false, path: path, text: '',
+            error: (e && e.message) ? e.message : String(e),
+        };
+    }
+}
+
+/**
+ * 备份当前配置 → config.json.bak-<tag>-<时间戳>（0600）。
+ * LLRT 的 node:fs **没有 copyFileSync**，所以是「读出来再写」；备份失败只 warn，不挡主流程。
+ */
+function backupConfigFile(tag) {
+    const cur = readConfigFile();
+    if (!cur.ok || !cur.text) return '';
+    const to = cur.path + '.bak-' + String(tag || 'save') + '-' + Date.now();
+    try {
+        writeFileSync(to, cur.text, { mode: 0o600 });
+        try { chmodSync(to, 0o600); } catch (e2) { /* 已经是 0600 */ }
+        return to;
+    } catch (e) {
+        warn('[' + PLUGIN + '] 配置备份失败（继续写）：' + (e && e.message ? e.message : e));
+        return '';
+    }
+}
+
+/**
+ * 原子写配置：同目录 .tmp（0600）→ rename 覆盖。
+ * 为什么不是直接覆盖：写到一半被打断会留下半截 JSON，下次 loadConfig 直接坏掉。
+ * LLRT 没有 unlinkSync —— rename 成功就不会留 tmp；rename 失败时 tmp 留着也无害。
+ */
+function writeConfigFile(cfg, opts) {
+    const path = configFilePath();
+    if (!path) throw new Error('拿不到 plugin_data_dir，没法写配置');
+    mkdirSync(MY_DATA_DIR, { recursive: true });
+    if (opts && opts.backup) backupConfigFile(opts.backup);
+    const body = JSON.stringify(cfg, null, 2) + '\n';
+    const tmp = path + '.tmp';
+    writeFileSync(tmp, body, { mode: 0o600 });
+    try { chmodSync(tmp, 0o600); } catch (e) { /* 已经是 0600 */ }
+    renameSync(tmp, path);
+    return { path: path, bytes: body.length };
+}
+
+/** 把原始 JSON 归一成运行用的 cfg（补默认值、夹范围、丢掉废弃字段）。纯函数。 */
+function normalizeConfig(raw) {
+    const src = (raw && typeof raw === 'object' && !Array.isArray(raw)) ? raw : {};
+    const cfg = Object.assign({}, DEFAULTS, src);
+    cfg.schema_version = SCHEMA_VERSION;
     if (!Array.isArray(cfg.devices)) cfg.devices = [];
     delete cfg.app_import; // 老版本的「macOS App 账号导入」已整段删除（2026-11-13），旧字段直接忽略
     cfg.comment = Object.assign({}, DEFAULTS.comment,
-        (raw && typeof raw.comment === 'object' && !Array.isArray(raw.comment)) ? raw.comment : {});
+        (typeof src.comment === 'object' && !Array.isArray(src.comment)) ? src.comment : {});
     cfg.topup_min = clampInt(cfg.topup_min, 0, 1440, DEFAULTS.topup_min);
     delete cfg.readonly; // 旧配置里的 readonly 字段直接忽略
     cfg.report_ms = clampInt(cfg.report_ms, 1000, 6 * 3600 * 1000, DEFAULTS.report_ms);
     cfg.timeout_ms = clampInt(cfg.timeout_ms, 1000, 60000, DEFAULTS.timeout_ms);
     cfg.task_interval = Object.assign({}, DEFAULTS.task_interval,
-        (raw && typeof raw.task_interval === 'object' && !Array.isArray(raw.task_interval)) ? raw.task_interval : {});
+        (typeof src.task_interval === 'object' && !Array.isArray(src.task_interval)) ? src.task_interval : {});
     cfg.task_interval.min_ms = clampInt(cfg.task_interval.min_ms, 0, 15000, DEFAULTS.task_interval.min_ms);
     cfg.task_interval.max_ms = clampInt(cfg.task_interval.max_ms, 0, 15000, DEFAULTS.task_interval.max_ms);
     if (cfg.task_interval.max_ms < cfg.task_interval.min_ms) cfg.task_interval.max_ms = cfg.task_interval.min_ms;
     cfg.cert = typeof cfg.cert === 'string' ? cfg.cert.trim() : '';
     cfg.tls = cfg.tls === 'native' ? 'native' : '';
+    cfg.link_disabled = linkDisabledList({ link_disabled: cfg.link_disabled });
     return cfg;
 }
 
+/**
+ * 读配置（**每次调用都读文件**）。
+ *
+ * 三种情况分得很清：
+ *   · 文件不存在 → 按 DEFAULTS 跑（新装，或迁移还没跑；迁移会马上把文件写出来）
+ *   · 文件是坏 JSON → **抛错**，消息里带路径。插件不覆盖坏文件，任务/接口把这个错原样报给人
+ *   · 正常 → 归一化后返回
+ */
+function loadConfig() {
+    const path = configFilePath();
+    if (!path) throw new Error('拿不到 plugin_data_dir，配置不可用');
+    if (!fileExists(path)) return normalizeConfig({});
+    let text;
+    try {
+        text = readFileSync(path, 'utf8');
+    } catch (e) {
+        throw new Error('读取配置失败（' + path + '）：' + (e && e.message ? e.message : e));
+    }
+    let raw;
+    try {
+        raw = JSON.parse(text);
+    } catch (e) {
+        throw new Error('配置文件不是合法 JSON（' + path + '）：'
+            + (e && e.message ? e.message : e)
+            + '。改好它、或删掉它再重载插件 —— 插件不会覆盖坏文件。');
+    }
+    if (!raw || typeof raw !== 'object' || Array.isArray(raw)) {
+        throw new Error('配置文件顶层必须是 JSON 对象（' + path + '）');
+    }
+    return normalizeConfig(raw);
+}
+
+/** 校验后写文件。这是插件侧**唯一**的配置写入口（面板表单那条由面板自己写，落点是同一份文件）。 */
+function saveConfig(input) {
+    const cfg = validateConfig(Object.assign({}, input, { schema_version: SCHEMA_VERSION }));
+    cfg.schema_version = SCHEMA_VERSION;
+    writeConfigFile(cfg, { backup: 'save' });
+    return cfg;
+}
+
+/** devices 的身份键：ce 优先，没有就 uid+msisdn，再没有就 deviceid。 */
+function deviceKeyOf(d) {
+    if (!d || typeof d !== 'object') return '';
+    if (d.ce) return 'ce:' + String(d.ce);
+    if (d.uid && d.msisdn) return 'uid:' + String(d.uid) + '|' + String(d.msisdn);
+    if (d.deviceid) return 'dev:' + String(d.deviceid);
+    return '';
+}
+
+/**
+ * 迁移时的合并规则：**state 优先、文件补缺**。
+ *   · 标量（topup_min / cert / tls / report_ms …）：state 里有就用 state 的 ——
+ *     0.4.x～0.6.x 期间用户是在插件界面里改的，改到的就是 state 那一份。
+ *   · comment / task_interval：逐键合并，state 的赢。
+ *   · devices：并集，按身份键去重；state 的排前面（顺序 = 用户看到的顺序）。
+ *   · link_disabled：并集。
+ */
+function mergeConfigs(fileRaw, legacyRaw) {
+    const file = (fileRaw && typeof fileRaw === 'object' && !Array.isArray(fileRaw)) ? fileRaw : {};
+    const legacy = (legacyRaw && typeof legacyRaw === 'object' && !Array.isArray(legacyRaw)) ? legacyRaw : {};
+    const out = Object.assign({}, file);
+    const nested = { devices: 1, comment: 1, task_interval: 1, link_disabled: 1, schema_version: 1 };
+    const keys = Object.keys(legacy);
+    for (let i = 0; i < keys.length; i += 1) {
+        const k = keys[i];
+        if (nested[k]) continue;
+        out[k] = legacy[k];
+    }
+    out.comment = Object.assign({},
+        (file.comment && typeof file.comment === 'object') ? file.comment : {},
+        (legacy.comment && typeof legacy.comment === 'object') ? legacy.comment : {});
+    out.task_interval = Object.assign({},
+        (file.task_interval && typeof file.task_interval === 'object') ? file.task_interval : {},
+        (legacy.task_interval && typeof legacy.task_interval === 'object') ? legacy.task_interval : {});
+    const seen = {};
+    const devices = [];
+    const push = function (d) {
+        const key = deviceKeyOf(d);
+        if (key && seen[key]) return;
+        if (key) seen[key] = true;
+        devices.push(d);
+    };
+    const legacyDevs = Array.isArray(legacy.devices) ? legacy.devices : [];
+    const fileDevs = Array.isArray(file.devices) ? file.devices : [];
+    for (let i = 0; i < legacyDevs.length; i += 1) push(legacyDevs[i]);
+    for (let i = 0; i < fileDevs.length; i += 1) push(fileDevs[i]);
+    out.devices = devices;
+    out.link_disabled = linkDisabledList({
+        link_disabled: (Array.isArray(legacy.link_disabled) ? legacy.link_disabled : [])
+            .concat(Array.isArray(file.link_disabled) ? file.link_disabled : []),
+    });
+    out.schema_version = SCHEMA_VERSION;
+    return out;
+}
+
+/**
+ * 一次性迁移：mgmusic.config（旧 state）+ 磁盘 config.json → 唯一的那份 config.json。
+ *
+ * 幂等：迁移标记 mgmusic.migration_v1 在就整个跳过。步骤：
+ *   1) 读文件；坏 JSON 就 **rename 成 config.json.bad-<ts>** 留档（不删、不覆盖），按「没有文件」处理
+ *   2) 读旧 state（有就解析；坏了当没有）
+ *   3) 合并（见 mergeConfigs）并校验；校验不过 → 备份 + 用 DEFAULTS
+ *   4) 文件本来就在就先备份（.bak-migrate-<ts>），再原子写 0600
+ *   5) 旧 state 收尾：原文存进 mgmusic.config.legacy（只读备份）→ 删 mgmusic.config
+ *      → 删老的双轨标记 mgmusic.seed_marker → 打 mgmusic.migration_v1
+ *
+ * 之后**再也不看 state 里的配置**：唯一的真值就是那个文件。
+ */
+async function migrateConfigOnce() {
+    if (stateGet(ST_MIGRATION) !== null) return { migrated: false, reason: '已迁移过' };
+    const path = configFilePath();
+    if (!path) {
+        warn('[' + PLUGIN + '] 拿不到 plugin_data_dir，跳过配置迁移（配置文件不可用）');
+        return { migrated: false, reason: '没有数据目录' };
+    }
+
+    // 1) 文件
+    let fileRaw = null;
+    let fileText = '';
+    let badMoved = '';
+    const cur = readConfigFile();
+    if (cur.ok && cur.text) {
+        fileText = cur.text;
+        try {
+            const v = JSON.parse(cur.text);
+            if (!v || typeof v !== 'object' || Array.isArray(v)) throw new Error('顶层不是 JSON 对象');
+            fileRaw = v;
+        } catch (e) {
+            badMoved = path + '.bad-' + Date.now();
+            try {
+                renameSync(path, badMoved); // 原样移走：不覆盖、不删除用户的坏文件
+            } catch (e2) {
+                badMoved = '';
+            }
+            warn('[' + PLUGIN + '] plugin-data/' + PLUGIN + '/config.json 不是合法 JSON（'
+                + (e && e.message ? e.message : e) + '）'
+                + (badMoved ? '，已原样移到 ' + badMoved : '') + '；按「没有文件」继续迁移');
+            fileText = '';
+        }
+    } else if (!cur.missing && cur.error) {
+        warn('[' + PLUGIN + '] 读 config.json 失败（按没有文件处理）：' + cur.error);
+    }
+
+    // 2) 旧 state 里的那份配置
+    const legacyText = stateGet(ST_LEGACY_STATE_CONFIG);
+    let legacyRaw = null;
+    if (legacyText) {
+        try {
+            const v = JSON.parse(legacyText);
+            if (v && typeof v === 'object' && !Array.isArray(v)) legacyRaw = v;
+        } catch (e) {
+            warn('[' + PLUGIN + '] state 里的旧配置不是合法 JSON，迁移时忽略它');
+        }
+    }
+
+    // 3) 合并 + 校验
+    let source = 'defaults';
+    if (fileRaw && legacyRaw) source = 'merge';
+    else if (legacyRaw) source = 'state';
+    else if (fileRaw) source = 'file';
+    let merged;
+    try {
+        merged = (source === 'defaults')
+            ? normalizeConfig(DEFAULTS)
+            : validateConfig(mergeConfigs(fileRaw, legacyRaw));
+    } catch (e) {
+        warn('[' + PLUGIN + '] 迁移合并出来的配置不合法（回落到默认值，原文件已备份）：'
+            + (e && e.message ? e.message : e));
+        if (fileText) backupConfigFile('migrate-bad');
+        merged = normalizeConfig(DEFAULTS);
+        source = 'defaults';
+    }
+    merged.schema_version = SCHEMA_VERSION;
+
+    // 4) 写文件（本来没有文件就不用备份；坏文件已经移走了）
+    try {
+        writeConfigFile(merged, { backup: fileRaw ? 'migrate' : '' });
+    } catch (e) {
+        warn('[' + PLUGIN + '] 写 config.json 失败（迁移没完成，下次加载重试）：'
+            + (e && e.message ? e.message : e));
+        return { migrated: false, reason: '写文件失败' };
+    }
+
+    // 5) 旧 state 收尾
+    if (legacyText) stateSet(ST_LEGACY_CONFIG, legacyText);
+    if (legacyText !== null) stateDel(ST_LEGACY_STATE_CONFIG);
+    stateDel(ST_SEED_MARK_OLD);
+    stateSet(ST_MIGRATION, JSON.stringify({
+        at: Date.now(),
+        from: source,
+        schema: SCHEMA_VERSION,
+        devices: merged.devices.length,
+        bad_file: badMoved || null,
+    }));
+
+    info('[' + PLUGIN + '] 配置已统一到 plugin-data/' + PLUGIN + '/config.json：'
+        + merged.devices.length + ' 个设备（来源 ' + source
+        + (badMoved ? '，坏文件已留档 ' + badMoved : '') + '）');
+    return { migrated: true, from: source, devices: merged.devices.length, path: path, bad: badMoved };
+}
 function devCe(dev) {
     if (dev && dev.ce) return String(dev.ce);
     if (!dev || !dev.uid || !dev.msisdn) {
@@ -2414,7 +2707,32 @@ function selftest() {
     } catch (e) {
         link.reason = (e && e.message) ? e.message : String(e);
     }
-    return { ok: got === want, got: got, want: want, version: VERSION, link: link };
+    // 配置这一层也要能自检：文件在不在、schema 版本、几个设备、权限是不是 0600。
+    // 不看内容（里面有 ce/cookie），只给计数与形状。
+    const cfgPath = configFilePath();
+    const conf = { path: cfgPath, exists: fileExists(cfgPath), schema_version: null, devices: 0, mode: '', readable: false, error: '' };
+    if (conf.exists) {
+        try {
+            const st = statSync(cfgPath);
+            conf.mode = (st.mode & 0o777).toString(8);
+        } catch (e) { /* 读不到 mode 就不显示 */ }
+        try {
+            const raw = JSON.parse(readFileSync(cfgPath, 'utf8'));
+            conf.schema_version = (raw && raw.schema_version !== undefined) ? raw.schema_version : null;
+            conf.devices = (raw && Array.isArray(raw.devices)) ? raw.devices.length : 0;
+            conf.readable = true;
+        } catch (e) {
+            conf.error = (e && e.message) ? e.message : String(e);
+        }
+    }
+    return {
+        ok: got === want,
+        got: got,
+        want: want,
+        version: VERSION,
+        link: link,
+        config: conf,
+    };
 }
 
 // ──────────────────────────────────────────────────────────── 配置读写 / 路由
@@ -2467,8 +2785,7 @@ function validateConfig(input) {
     if (skipList === undefined) {
         let prev = {};
         try {
-            const prevText = stateGet(ST_CONFIG);
-            prev = prevText ? (JSON.parse(prevText) || {}) : {};
+            prev = loadConfig(); // 同一份文件：漏传时沿用现值
         } catch (e) {
             prev = {};
         }
@@ -2490,84 +2807,6 @@ function validateConfig(input) {
         if (d.topup_min !== undefined) d.topup_min = clampInt(d.topup_min, 0, 1440, DEFAULTS.topup_min);
     }
     return cfg;
-}
-
-function saveConfig(input) {
-    const cfg = validateConfig(input);
-    // 老版 fs.writeFileSync('config.json', …)；0.4.x 写 state 键（同步 op，结构不变）。
-    stateSet(ST_CONFIG, JSON.stringify(cfg, null, 2));
-    return cfg;
-}
-
-/**
- * 播种：`mgmusic.config` 不存在时跑一次（模块加载期 await 一次）。
- *
- * 1) `await host.self_config()` 非空 → validateConfig 后写进 state。
- *    这是 `plugin-data/<插件>/config.json` 的**正式入口**：迁移老面板的账号，
- *    就是把 `~/Library/Application Support/plugin-panel/data/plugin-data/mgmusic/config.json`
- *    复制到 `<PANEL_DATA_DIR>/plugin-data/mgmusic/config.json`，再重载插件。
- * 2) 没给（或是空对象）→ 用 DEFAULTS。
- *
- * 之后一切读写只走 state：那份文件当导入源，不在这里回写。
- */
-async function seedConfig() {
-    let imported = null;
-    try {
-        imported = await host.self_config();
-    } catch (e) {
-        warn('[' + PLUGIN + '] self_config 读取失败：' + (e && e.message ? e.message : e));
-    }
-    const fileCfg = (imported && typeof imported === 'object' && !Array.isArray(imported)
-        && Object.keys(imported).length > 0) ? imported : null;
-
-    const curText = stateGet(ST_CONFIG);
-
-    // ① 第一次跑（state 里还没有配置）：按老规矩播种。
-    if (curText === null) {
-        if (fileCfg) {
-            try {
-                const cfg = validateConfig(fileCfg);
-                stateSet(ST_CONFIG, JSON.stringify(cfg, null, 2));
-                stateSet(ST_SEED_MARK, 'file');
-                info('[' + PLUGIN + '] 已从 plugin-data/' + PLUGIN + '/config.json 播种配置：'
-                    + cfg.devices.length + ' 个设备');
-                return true;
-            } catch (e) {
-                // 迁移过来的配置不合规时**不静默吞掉**：喊出来，再用默认配置起步。
-                warn('[' + PLUGIN + '] plugin-data/' + PLUGIN + '/config.json 校验失败，回落到默认配置：'
-                    + (e && e.message ? e.message : e));
-            }
-        }
-        stateSet(ST_CONFIG, JSON.stringify(validateConfig(DEFAULTS), null, 2));
-        // ⚠ 这里**不**打播种标记：万一有人先启动、后放 config.json，下一次重启还能补上。
-        return false;
-    }
-
-    // ② state 已有配置。只有在「还没从文件播过种 + 现在一个账号都没有」时才补播一次 ——
-    //    这是「先启动面板、后拷 config.json」那种次序错误的唯一补救机会。
-    //    已经播过种（标记在）就绝不再覆盖：用户在界面上删光了账号也不该被文件偷偷复活。
-    if (stateGet(ST_SEED_MARK) !== null) return false;
-    let cur = null;
-    try { cur = JSON.parse(curText); } catch (e) { cur = null; }
-    const curN = (cur && Array.isArray(cur.devices)) ? cur.devices.length : 0;
-    if (curN === 0 && fileCfg) {
-        try {
-            const cfg = validateConfig(fileCfg);
-            if (cfg.devices.length > 0) {
-                stateSet(ST_CONFIG, JSON.stringify(cfg, null, 2));
-                stateSet(ST_SEED_MARK, 'file');
-                warn('[' + PLUGIN + '] 迁移补播种：state 里一个账号都没有，已从 plugin-data/'
-                    + PLUGIN + '/config.json 导入 ' + cfg.devices.length
-                    + ' 个设备。正确次序是「先放 config.json，再启动面板」。');
-                return true;
-            }
-        } catch (e) {
-            warn('[' + PLUGIN + '] 迁移补播种失败（config.json 校验不通过）：'
-                + (e && e.message ? e.message : e));
-        }
-    }
-    if (curN > 0) stateSet(ST_SEED_MARK, 'state'); // 已经有账号了：以后不再从文件覆盖
-    return false;
 }
 
 function json(status, obj) {
@@ -2602,12 +2841,15 @@ function parseBody(req) {
 
 // ──────────────────────────────────────────────────────────── 注册（0.4.x 契约）
 
-// 加载期第一步：播种配置（只在 state 里没有 mgmusic.config 时读一次 self_config）。
-// 老版这里是「config() 直接读 plugin-data/mgmusic/config.json」；新面板把这一步显式化。
+// 加载期第一步：拿到自己的数据目录 → 跑一次性迁移（0.6.x 的 state 配置 → 唯一的那份 config.json）。
+// 迁移幂等（标记 mgmusic.migration_v1）；失败只 warn，绝不让插件加载挂掉 —— 配置读不出来时
+// loadConfig() 会给出带路径的明确报错，比「插件加载失败」好查。
 try {
-    await seedConfig();
+    await initDataDir();
+    await migrateConfigOnce();
 } catch (e) {
-    warn('[' + PLUGIN + '] 配置播种失败：' + (e && e.message ? e.message : e));
+    warn('[' + PLUGIN + '] 配置迁移失败（插件照常加载，配置以文件为准）：'
+        + (e && e.message ? e.message : e));
 }
 
 // 侧栏一格（老 register_nav({label, icon})；0.4.x 没有 icon 字段）。
@@ -2625,7 +2867,14 @@ await initMcloudStore();
 
 const WEB_ROUTES = {
     'GET api/config': function () {
-        const cfg = loadConfig();
+        // 配置读不出来（坏 JSON）时也把路径带上：界面要能告诉人去修哪个文件。
+        let cfg = null;
+        let error = '';
+        try {
+            cfg = loadConfig();
+        } catch (e) {
+            error = (e && e.message) ? e.message : String(e);
+        }
         // `link` 只是给界面看的摘要（**加字段、不改旧字段**）：云盘账号表读不读得到、
         // 有几条、禁用了哪几个。真正的清单在 GET api/link。
         let link = { available: false, count: 0, reason: '' };
@@ -2635,7 +2884,15 @@ const WEB_ROUTES = {
         } catch (e) {
             link = { available: false, count: 0, reason: (e && e.message) ? e.message : String(e) };
         }
-        return json(200, { ok: true, config: cfg, link: link });
+        const out = {
+            ok: !error,
+            config_path: configFilePath(),
+            schema_version: SCHEMA_VERSION,
+            config: cfg || normalizeConfig({}),
+            link: link,
+        };
+        if (error) out.error = error;
+        return json(200, out);
     },
     'POST api/config': function (req) {
         const body = parseBody(req);
@@ -2647,7 +2904,13 @@ const WEB_ROUTES = {
                 + '否则等于把账号全删了');
         }
         const cfg = saveConfig(input);
-        return json(200, { ok: true, config: cfg });
+        // 写的是唯一那份 config.json：面板「插件 → 配置」页刷新一下看到的就是它。
+        return json(200, {
+            ok: true,
+            config: cfg,
+            config_path: configFilePath(),
+            saved_at: Date.now(),
+        });
     },
     'POST api/login/send': function (req) {
         const body = parseBody(req);
@@ -2745,11 +3008,12 @@ await host.register_handler('daily', function () {
 // POST /plugins/mgmusic/api/{sign,comment,report}），任务表里保持**只有 daily 一条**。
 // 代价：不能在面板「任务」页手动派发这三件事 —— 要手动就去插件页点按钮（那本来就是入口）。
 
-// ── 加载日志（老版的启动自述；config() 换成 state，其余不变）。
+// ── 加载日志（老版的启动自述；配置来源换成唯一的那份 config.json）。
 try {
     const cfg = loadConfig();
     info(PLUGIN + ' v' + VERSION + ' 已加载：' + cfg.devices.length
-        + ' 个设备，topup_min=' + cfg.topup_min);
+        + ' 个设备，topup_min=' + cfg.topup_min
+        + '，配置=' + configFilePath());
 } catch (e) {
     warn(PLUGIN + ' v' + VERSION + ' 已加载，但配置读取失败：'
         + (e && e.message ? e.message : e));
