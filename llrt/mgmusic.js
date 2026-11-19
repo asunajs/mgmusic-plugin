@@ -50,6 +50,9 @@
 //     config.json 合并成上面那一份文件（state 优先、文件补缺、devices 按 ce/uid+msisdn 去重）、
 //     先备份再原子写 0600，然后删掉旧的 state 键并打 `migration_v1` 标记。幂等。
 //     老的双轨标记 `mgmusic.seed_marker` 在这次迁移里删除。
+//     **用户侧零动作**：换上新版本、插件加载时自己跑完（不需要 cp / 删 state 键 / 讲次序）。
+//     兜底：坏 JSON 原样改名 `config.json.bad-<ts>` 留档；文件 schema 比插件新时按只读使用、
+//     不改写（防旧版覆盖新版）；写失败只 warn、下次加载重试。
 //
 // 任务：
 //   daily  —— 00:05 / 12:05 / 22:05：login-access + qsq + zyd-sign + 窗口打卡
@@ -1736,6 +1739,16 @@ async function migrateConfigOnce() {
         }
     } else if (!cur.missing && cur.error) {
         warn('[' + PLUGIN + '] 读 config.json 失败（按没有文件处理）：' + cur.error);
+    }
+
+    // 1.5) 文件比本插件新（用户先升了插件又回退）：按只读用，什么都别改 ——
+    //      改写它等于用旧格式覆盖新格式，那是数据损失。旧 state 也不动（没合并过，留着）。
+    const fileSchema = (fileRaw && typeof fileRaw.schema_version === 'number') ? fileRaw.schema_version : null;
+    if (fileSchema !== null && fileSchema > SCHEMA_VERSION) {
+        warn('[' + PLUGIN + '] config.json 的 schema_version=' + fileSchema
+            + ' 比本插件新（本插件 ' + SCHEMA_VERSION + '）：按只读使用，不改写它、也不迁移旧 state。'
+            + '请升级插件，或从 config.json.bak-* 回滚。');
+        return { migrated: false, reason: '文件是更新版本写的' };
     }
 
     // 2) 旧 state 里的那份配置

@@ -283,14 +283,32 @@ await ok('删光账号后重载：不会被旧文件/旧 state 复活', async ()
 // 10) 老文件没有 schema_version → 迁移补上并备份原文件
 await ok('老文件没有 schema_version：迁移补 schema 并备份 .bak-migrate-*', async () => {
   const rig = makeRig();
-  writeFileSync(rig.file, JSON.stringify({ devices: [device(1)], topup_min: 20 }));
+  // 老面板 0.3.x 的原样文件：没有 schema_version，还带着早就删掉的 app_import
+  writeFileSync(rig.file, JSON.stringify({ app_import: { enabled: true }, devices: [device(1)], topup_min: 20 }));
   await rig.load();
   const cfg = readJSON(rig.file);
   assert.equal(cfg.schema_version, 1);
   assert.equal(cfg.devices.length, 1);
   assert.equal(cfg.topup_min, 20);
+  assert.equal(cfg.app_import, undefined, '废弃字段 app_import 不该留下');
   const backups = readdirSync(rig.dataDir).filter((f) => f.indexOf('config.json.bak-migrate-') === 0);
   assert.equal(backups.length, 1, '改之前要备份原文件');
+});
+
+// 12) 文件比插件新（用户升了插件又回退）：只读，不改写、不动 state
+await ok('文件 schema 比插件新：只读使用，不改写、不迁移（防旧版覆盖新版）', async () => {
+  const rig = makeRig();
+  const future = JSON.stringify({ schema_version: 9, devices: [device(1)], topup_min: 30 }, null, 2);
+  writeFileSync(rig.file, future);
+  const { box, state } = await rig.load();
+  assert.equal(readFileSync(rig.file, 'utf8'), future, '文件必须原样不动');
+  assert.equal(state.get('mgmusic.migration_v1'), undefined, '不该打迁移标记');
+  const warns = box.logs.filter((l) => l.level === 'warn' && l.msg.indexOf('schema_version=9') >= 0);
+  assert.ok(warns.length >= 1, '要 warn 出来：文件比本插件新');
+  // 仍然能读（只读使用）
+  const got = await rig.route(box, 'GET', 'api/config');
+  assert.equal(got.json.ok, true);
+  assert.equal(got.json.config.devices.length, 1);
 });
 
 // 11) 自检要能把配置那层说清楚
