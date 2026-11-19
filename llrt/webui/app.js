@@ -658,7 +658,14 @@ async function removeAccount(index) {
   const dev = devices()[index];
   if (!dev) return;
   const name = deviceLabel(dev, index);
-  if (!window.confirm('删除账号「' + name + '」？只删除本面板里的凭证，不会注销咪咕账号。')) return;
+  // 确认走面板的弹窗（PanelUI.confirm，/ui.js 提供），不用浏览器原生 confirm：
+  // 原生框是另一个窗口、和面板长得完全不一样，iframe 里还可能被拦。
+  const ok = await PanelUI.confirm({
+    text: '删除账号「' + name + '」？只删除本面板里的凭证，不会注销咪咕账号。',
+    okLabel: '删除',
+    danger: true,
+  });
+  if (!ok) return;
   const cfg = clone(S.config);
   cfg.devices.splice(index, 1);
   try {
