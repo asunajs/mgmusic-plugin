@@ -35,9 +35,7 @@ node scripts/build-panelllrt.mjs
 
 # 样式门禁：面板仓的 check-plugin-style 按 cwd/plugins 扫，所以拿产物在临时目录里摆成插件目录
 # 再跑它 —— 这样"插件归插件项目"之后，这道闸门也没丢。
-# 面板仓位置：2026-11-19 起改名叫 panel-plugin（旧名 panel-llrt 在 workspace 根留了软链，两个都能走通）
-PANEL_REPO="${PANEL_REPO:-$ROOT/../../panel-plugin}"
-[ -d "$PANEL_REPO" ] || PANEL_REPO="$ROOT/../../panel-llrt"   # 兜底：软链被收掉之前的旧名
+PANEL_REPO="${PANEL_REPO:-$ROOT/../../panel-llrt}"
 GATE="$PANEL_REPO/scripts/check-plugin-style.mjs"
 if [ -f "$GATE" ]; then
   TMP="$(mktemp -d)"
