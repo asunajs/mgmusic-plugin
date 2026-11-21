@@ -1,13 +1,14 @@
 // 打一个 **panel-llrt（0.4）形状** 的发布包。
 //
-// 和 `pack.sh` 的区别是**形状不同**：
+// 产物形状（旧的 0.3.x 那套 pack.sh 已随旧面板一起删掉）：
 //   · 0.3 老面板：`js/mgmusic.js` + `mgmusic/index.html`
 //   · 0.4 面板：  `mgmusic.js` + `mgmusic.panel.json` + `mgmusic.webui/`（全部平铺在 PLUGINS_DIR 顶层）
 //
 // 必须平铺：0.4 的加载器只扫 `plugins/*.js`，清单读 `plugins/<name>.panel.json`，
 // 界面读 `plugins/<name>.webui/`。塞进 `js/` 就等于「装了但面板看不见」。
 //
-// 产物：dist/mgmusic-plugin-<version>-panel04.zip（+ .sha256、SHA256SUMS）
+// 产物：dist/mgmusic-plugin-<version>-panel<NN>.zip（+ .sha256、SHA256SUMS）
+//   NN 由清单 min_panel 推（0.7.0 → panel07）；别再把系列号写死，清单一提就对不上。
 // 发布给商店的资产；本地装实例还是走 `npm run deploy:panel`（不经过 zip）。
 
 import { createHash } from 'node:crypto';
@@ -29,7 +30,13 @@ function die(msg) {
 
 const pkg = JSON.parse(readFileSync(join(ROOT, 'package.json'), 'utf8'));
 const version = pkg.version;
-const zipName = `mgmusic-plugin-${version}-panel04.zip`;
+// 系列号从清单推导（和 panel-store 的 pack.mjs 同一口径）
+const manifestSrc = readFileSync(join(ROOT, 'dist/panel-llrt/mgmusic.panel.json'), 'utf8');
+const minPanel = String(JSON.parse(manifestSrc).min_panel || '');
+if (!minPanel) die('清单缺 min_panel');
+const SERIES = minPanel.split('.').slice(0, 2).join('.');
+const PANEL_TAG = 'panel' + SERIES.split('.')[1].padStart(2, '0');
+const zipName = `mgmusic-plugin-${version}-${PANEL_TAG}.zip`;
 const outDir = join(ROOT, 'dist');
 const zipPath = join(outDir, zipName);
 

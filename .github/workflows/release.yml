@@ -3,7 +3,7 @@ name: Release
 # 打一个**面板能直接装**的 0.4 形状 zip，挂到 GitHub Release 上。
 #
 # ⚠ 2026-11-14 改成「只手动触发」，并且只打 0.4 形状：
-#   · 产物是 `dist/mgmusic-plugin-<version>-panel04.zip`（`npm run pack:panel04`：
+#   · 产物是 `dist/mgmusic-plugin-<version>-panel04.zip`（`npm run pack`：
 #     `mgmusic.js` + `mgmusic.panel.json` + `mgmusic.webui/` 全部平铺在 zip 根）；
 #   · 发布由维护者从**干净 worktree + tag** 跑，zip 的 sha256 才和发布出去的一致
 #     （`scripts/zip.mjs` 固定 DOS 时间戳，同输入同 sha256；脏工作树里打包会混进未提交改动）；
@@ -47,7 +47,7 @@ jobs:
         run: |
           set -euo pipefail
           npm run build:panelllrt
-          npm run pack:panel04
+          npm run pack
 
       - name: 发布
         env:

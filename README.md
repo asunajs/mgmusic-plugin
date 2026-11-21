@@ -1,4 +1,4 @@
-# mgmusic-plugin —— 咪咕音乐金币中心（QuickJS / Node 插件）
+# mgmusic-plugin —— 咪咕音乐金币中心（panel-llrt / LLRT 插件）
 
 `mgmusic-plugin` 是 GitHub 项目/发布包名；面板里注册的插件 id 是 **`mgmusic`**。插件提供以下能力：
 
@@ -98,13 +98,19 @@ uid / deviceid / ce 由短信登录或 App 同步自动维护，不需要用户�
 
 | 文件 | 作用 |
 |---|---|
-| `mgmusic.js` | 插件后端（QuickJS / ESM，安装到 `plugins/js/mgmusic.js`） |
-| `index.html` / `app.js` / `style.css` / `boot.js` | 插件配置页（安装到 `plugins/mgmusic/`） |
-| `config.example.json` | 配置模板（安装到插件数据目录，首次安装时复制） |
-| `scripts/sync-macos-account.mjs` | 从已登录的 macOS 咪咕 App 同步真实 uid/msisdn 到插件数据根（**仅 0.3.x**；0.4.x 已删这个功能） |
-| `llrt/` | **0.4.x 变体**（panel-llrt / LLRT）的源：`mgmusic.js` + `webui/` |
-| `scripts/build-panelllrt.mjs` / `scripts/deploy-panel.sh` | 0.4.x 的构建与部署（见文末「0.4.x」一节） |
-| `install.sh` | 一键安装到本机面板 |
+| `llrt/mgmusic.js` | 插件后端源（LLRT / ESM） |
+| `llrt/webui/` | 插件配置页源（`index.html` / `app.js` / `style.css` / `boot.js`） |
+| `llrt/mgmusic.panel.json` | 清单（`version` / `min_panel` / 配置字段） |
+| `scripts/build-panelllrt.mjs` | 构建：`llrt/` → `dist/panel-llrt/`（`mgmusic.js` + 清单 + `mgmusic.webui/`） |
+| `scripts/pack-panelllrt.mjs` | 打发布 zip：`dist/mgmusic-plugin-<ver>-panel<NN>.zip`（NN 由 `min_panel` 推） |
+| `scripts/deploy-panel.sh` | 装进本机实例的插件目录（默认 `~/panel-3030/plugins`） |
+| `scripts/check-link.mjs` / `scripts/test-config.mjs` | 自检：云盘账号联动 / 配置存储回归 |
+| `install.sh` | 一键安装到本机面板（装的是 `dist/panel-llrt/`） |
+| `types/` + `tsconfig.{webui,node}.json` | 类型检查通道（契约副本由面板同步，见 `panel-plugins/docs/UNIFY.md`） |
+
+> **旧面板（0.3.x / QuickJS）那套布局已删除**：仓库根不再有 `mgmusic.js` / `index.html` /
+> `app.js` / `style.css` / `boot.js` / `config.example.json`，也不再支持 `plugins/js/` 那种装法。
+> 只有 LLRT 一条线。
 
 ## 面板商城
 
@@ -113,10 +119,8 @@ uid / deviceid / ce 由短信登录或 App 同步自动维护，不需要用户�
 [`asunajs/mgmusic-plugin`](https://github.com/asunajs/mgmusic-plugin)，Release 里挂的是
 面板能直接解压的 zip。
 
-也可以手动下载 [`mgmusic-plugin-0.1.1.zip`](https://github.com/asunajs/mgmusic-plugin/releases/download/v0.1.1/mgmusic-plugin-0.1.1.zip)
-后在「插件管理 → 上传」里安装。
-
-> 本地开发版是 **0.5.2**（0.5.2 只补清单 `version` 字段；0.5.1 新增移动云盘 auth 登录；0.5.0 已有 LLRT 版签到 + 评论 + 随机任务间隔）。
+也可以在 Release 里下载 `dist/mgmusic-plugin-<ver>-panel<NN>.zip`（`npm run pack` 的产物），
+用「插件管理 → 上传」装。**不要再装 0.3.x 那套 `plugins/js/` 的老包** —— 面板已经不支持。
 
 ## 安装
 
@@ -133,18 +137,18 @@ PLUGIN_DATA_DIR  = ~/Library/Application Support/plugin-panel/data/plugin-data
 ./install.sh
 ```
 
-或者手动：
+或者手动（**先构建**，再拷产物；源码目录不能直接装）：
 
 ```bash
-# 1) 后端
-cp mgmusic.js  "$PLUGINS_DIR/js/"
-# 2) 配置页
-mkdir -p "$PLUGINS_DIR/mgmusic"
-cp index.html app.js style.css boot.js "$PLUGINS_DIR/mgmusic/"
-# 3) 配置（首次）
-mkdir -p "$PLUGIN_DATA_DIR/mgmusic"
-cp config.example.json "$PLUGIN_DATA_DIR/mgmusic/config.json"
+npm run build                                  # llrt/ → dist/panel-llrt/
+cp dist/panel-llrt/mgmusic.js           "$PLUGINS_DIR/"
+cp dist/panel-llrt/mgmusic.panel.json   "$PLUGINS_DIR/"
+rm -rf "$PLUGINS_DIR/mgmusic.webui"
+cp -R dist/panel-llrt/mgmusic.webui     "$PLUGINS_DIR/"
 ```
+
+配置不用手抄模板：插件首次运行会自己写 `$PLUGIN_DATA_DIR/mgmusic/config.json`（0600），
+也可以在插件页/面板「配置」页填。
 
 面板会在 30 秒内（通常更快）扫描到新插件；也可以在「插件列表」里点重载。
 打开侧边栏「咪咕音乐」即可进入配置页。
@@ -288,8 +292,8 @@ node scripts/sync-macos-account.mjs
 - 金币中心 H5 的 `ce` 必须用真实 uid；真实 uid 由 `getMyPage` 按手机号解析，不依赖 macOS App。
 - 登录成功后会自动用新凭证做一次 H5 查询；能查到音符/任务就说明凭证可用。
 - 短信验证码只用于确认手机号归属；手机号、uid、ce 都属于敏感信息，只写插件数据目录，不要贴到聊天/仓库。
-- 这条路径在 QuickJS 下即可跑，不需要把面板切到 Node。
-- QuickJS 内已验证 passport 公钥请求 + RSA 加密（1024-bit，输出 256 字符 hex，和网页 JS 的 RSAKey.encrypt 一致）；H5 查询用抓包 ce 变体验证过。
+- 这条路径在 LLRT 下即可跑（面板本身就是这个运行时）。
+- LLRT 内已验证 passport 公钥请求 + RSA 加密（1024-bit，输出 256 字符 hex，和网页 JS 的 RSAKey.encrypt 一致）；H5 查询用抓包 ce 变体验证过。
 
 ## 差距：没有 CLI（2026-11-21 记录）
 
@@ -323,7 +327,7 @@ node scripts/sync-macos-account.mjs
 
 ## 验证
 
-- 签名向量 10/10（QuickJS 26ms）
+- 签名向量 10/10（LLRT 26ms）
 - 面板内实测：普通账号完成 `login-access`、签到状态、qsq、zyd-sign、30 分钟补报、7 档领奖
 - 2026-11-06 评论实测：Android V005 头 + 空 `fkToken` → `000000`，任务 1/1，音符 64→69
 - 2026-11-06 签到实测：普通账号签到已签；新账号走新人签到 `new-user-receive`，`scoreNum=6`
@@ -368,8 +372,9 @@ POST https://app.pd.nf.migu.cn/user/api/comment/add/v2.0
 
 - 咪咕接口对 `Accept-Encoding` 敏感：插件统一发 `identity`；如果上游仍回 gzip，会明确报错而不是静默乱码。
 - 配置里有 `ce` / `msisdn` / `cookie`，属于敏感信息；它放在插件数据目录（不会被 `/plugins/` 静态服务），不要提交到 git。
-- 该插件只用 ECMAScript + `host-api` + `node:fs`（QuickJS 内置）；不要引入 `fetch` / `URL` / `TextEncoder` / `crypto`，QuickJS 没有。
-- 面板版本要求：`host-api` 带 `register_route` / `register_nav` 的版本（本仓库 0.3.0 实测）。
+- 该插件只用 ECMAScript + `panel:host` + LLRT 提供的 `node:` 子集（见 `types/node-llrt.d.ts`）；
+  不要引入 `fetch` / `URL` / `TextEncoder` / `crypto` 这些全局，LLRT 里没有。
+- 面板版本要求：见清单 `min_panel`（当前 0.7.0）。
 
 - daily cron 预算 120 秒，每个阶段都会写日志，不会只在最后一次性输出。
 ## 0.4.x（panel-llrt / LLRT）变体
@@ -380,7 +385,7 @@ POST https://app.pd.nf.migu.cn/user/api/comment/add/v2.0
 差异有 200 多处且不机械，所以 **单独维护一份源**（`llrt/`），不做构建期转换。
 
 ```text
-llrt/mgmusic.js                       0.4.x 源（0.7.0；0.3.x 那份仍在仓库根，老面板照用）
+llrt/mgmusic.js                       唯一实现（LLRT；0.3.x 那份已随旧面板删除）
 llrt/webui/{index.html,style.css,app.js,boot.js}
 scripts/build-panelllrt.mjs           llrt/ → dist/panel-llrt/{mgmusic.js, mgmusic.webui/}
 scripts/deploy-panel.sh               dist/ → 面板实例的 plugins/（含样式门禁 + 逐个 cmp）
@@ -400,12 +405,12 @@ bash scripts/deploy-panel.sh --restart                        # 装完顺手重�
 **账号在插件自己的 `config.json` 里**（`plugin-data/mgmusic/config.json`）：重装/重载插件都不会碰它，
 只有删掉这个文件才会回到「没有账号」（详见 panel-llrt 仓的 `docs/mgmusic-migration.md`）。
 
-0.4.x 的行为差异（相对 0.3.x，都是环境层收敛）：任务只有 `daily` 一条（签到/评论/补报走 HTTP 路由）、
+相对已废弃的 0.3.x，行为差异（都是环境层收敛）：任务只有 `daily` 一条（签到/评论/补报走 HTTP 路由）、
 不写任务摘要、不再有「macOS App 账号同步」（0.3.x 那个读 App plist 的选项已删）。
 
 ## 发布（面板 0.4 的 zip，0.5.0 起）
 
-资产名 `mgmusic-plugin-<version>-panel04.zip`（当前 **0.5.2**），挂在
+资产名 `mgmusic-plugin-<version>-panel<NN>.zip`（NN 由清单 `min_panel` 推，当前 0.7.0 → `panel07`），挂在
 <https://github.com/asunajs/mgmusic-plugin/releases>；同目录还有 `.sha256`。
 
 ```bash

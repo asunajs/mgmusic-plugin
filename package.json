@@ -8,14 +8,14 @@
     "check": "npm run check:types && npm run typecheck && npm test",
     "check:llrt": "node --check llrt/mgmusic.js && node --check llrt/webui/app.js",
     "check:link": "node scripts/check-link.mjs",
-    "pack": "bash scripts/pack.sh",
+    "pack": "node scripts/pack-panelllrt.mjs",
     "build:panelllrt": "node scripts/build-panelllrt.mjs",
     "deploy:panel": "bash scripts/deploy-panel.sh",
-    "pack:panel04": "node scripts/pack-panelllrt.mjs",
     "test:config": "node scripts/test-config.mjs",
     "check:types": "node scripts/sync-types.mjs --check",
     "typecheck": "node scripts/typecheck.mjs && npm run typecheck:node",
     "test": "npm run check:llrt && npm run test:config",
-    "typecheck:node": "node scripts/typecheck-node.mjs"
+    "typecheck:node": "node scripts/typecheck-node.mjs",
+    "build": "node scripts/build-panelllrt.mjs"
   }
 }
