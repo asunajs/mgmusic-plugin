@@ -98,10 +98,10 @@ uid / deviceid / ce 由短信登录或 App 同步自动维护，不需要用户�
 
 | 文件 | 作用 |
 |---|---|
-| `llrt/mgmusic.js` | 插件后端源（LLRT / ESM） |
-| `llrt/webui/` | 插件配置页源（`index.html` / `app.js` / `style.css` / `boot.js`） |
-| `llrt/mgmusic.panel.json` | 清单（`version` / `min_panel` / 配置字段） |
-| `scripts/build-panelllrt.mjs` | 构建：`llrt/` → `dist/panel-llrt/`（`mgmusic.js` + 清单 + `mgmusic.webui/`） |
+| `src/mgmusic.js` | 插件后端源（LLRT / ESM） |
+| `src/webui/` | 插件配置页源（`index.html` / `app.js` / `style.css` / `boot.js`） |
+| `mgmusic.panel.json` | 清单（`version` / `min_panel` / 配置字段）—— 真源在仓库根 |
+| `scripts/build-panelllrt.mjs` | 构建：`src/` → `dist/panel-llrt/`（`mgmusic.js` + 清单 + `mgmusic.webui/`） |
 | `scripts/pack-panelllrt.mjs` | 打发布 zip：`dist/mgmusic-plugin-<ver>-panel<NN>.zip`（NN 由 `min_panel` 推） |
 | `scripts/deploy-panel.sh` | 装进本机实例的插件目录（默认 `~/panel-3030/plugins`） |
 | `scripts/check-link.mjs` / `scripts/test-config.mjs` | 自检：云盘账号联动 / 配置存储回归 |
@@ -140,7 +140,7 @@ PLUGIN_DATA_DIR  = ~/Library/Application Support/plugin-panel/data/plugin-data
 或者手动（**先构建**，再拷产物；源码目录不能直接装）：
 
 ```bash
-npm run build                                  # llrt/ → dist/panel-llrt/
+npm run build                                  # src/ → dist/panel-llrt/
 cp dist/panel-llrt/mgmusic.js           "$PLUGINS_DIR/"
 cp dist/panel-llrt/mgmusic.panel.json   "$PLUGINS_DIR/"
 rm -rf "$PLUGINS_DIR/mgmusic.webui"
@@ -382,12 +382,12 @@ POST https://app.pd.nf.migu.cn/user/api/comment/add/v2.0
 新面板（`panel-llrt`，Rust + LLRT）用的是**另一套宿主契约**：`import host from 'panel:host'`、
 用户配置是插件数据目录里的 `config.json`（面板表单与插件页面同源）、运行期数据才走宿主 sqlite 的
 `state` 表、WebUI 走 `register_web` + `/app.css` + `<p-*>` 套件。
-差异有 200 多处且不机械，所以 **单独维护一份源**（`llrt/`），不做构建期转换。
+差异有 200 多处且不机械，所以 **单独维护一份源**（`src/`），不做构建期转换。
 
 ```text
-llrt/mgmusic.js                       唯一实现（LLRT；0.3.x 那份已随旧面板删除）
-llrt/webui/{index.html,style.css,app.js,boot.js}
-scripts/build-panelllrt.mjs           llrt/ → dist/panel-llrt/{mgmusic.js, mgmusic.webui/}
+src/mgmusic.js                       唯一实现（LLRT；0.3.x 那份已随旧面板删除）
+src/webui/{index.html,style.css,app.js,boot.js}
+scripts/build-panelllrt.mjs           src/ → dist/panel-llrt/{mgmusic.js, mgmusic.webui/}
 scripts/deploy-panel.sh               dist/ → 面板实例的 plugins/（含样式门禁 + 逐个 cmp）
 ```
 
@@ -414,7 +414,7 @@ bash scripts/deploy-panel.sh --restart                        # 装完顺手重�
 <https://github.com/asunajs/mgmusic-plugin/releases>；同目录还有 `.sha256`。
 
 ```bash
-npm run build:panelllrt     # llrt/ → dist/panel-llrt/（mgmusic.js + mgmusic.webui/ + 清单）
+npm run build:panelllrt     # src/ → dist/panel-llrt/（mgmusic.js + mgmusic.webui/ + 清单）
 npm run pack:panel04        # → dist/mgmusic-plugin-<version>-panel04.zip（+ .sha256、SHA256SUMS）
 ```
 
@@ -423,7 +423,7 @@ npm run pack:panel04        # → dist/mgmusic-plugin-<version>-panel04.zip（+ 
 
 ### 面板的「插件配置」表单
 
-`llrt/mgmusic.panel.json` 现在带 `config.fields`，插件卡片 → **配置** 是一张表单（不再是裸 JSON）：
+`src/mgmusic.panel.json` 现在带 `config.fields`，插件卡片 → **配置** 是一张表单（不再是裸 JSON）：
 
 | 配置项 | 类型 | 默认 | 说明 |
 |---|---|---|---|

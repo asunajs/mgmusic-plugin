@@ -1,4 +1,4 @@
-// 插件界面（llrt/webui/*.js）的类型检查门禁。
+// 插件界面（src/webui/*.js）的类型检查门禁。
 //
 // 本仓不装依赖：借同工作区 mcloud-plugin 的 tsc（和 yangshipin / panel-store 一个套路）。
 // 界面是手写 JS，checkJs 能抓到「写错 PanelUI 成员名 / 把控件当普通元素用」这类错，

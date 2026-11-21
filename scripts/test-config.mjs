@@ -14,7 +14,7 @@ import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
 
 const ROOT = new URL('..', import.meta.url).pathname;
-const SRC = join(ROOT, 'llrt/mgmusic.js');
+const SRC = join(ROOT, 'src/mgmusic.js');
 const BT = String.fromCharCode(96);
 
 let failures = 0;
@@ -125,7 +125,7 @@ function device(n, extra) {
   }, extra || {});
 }
 
-console.log('配置存储回归（llrt/mgmusic.js 0.7.0）');
+console.log('配置存储回归（src/mgmusic.js 0.7.0）');
 
 // 1) 干净安装：没有文件、没有 state → 建出唯一那份 config.json
 await ok('干净安装：建出 config.json（schema_version=1，0600，state 只有迁移标记）', async () => {

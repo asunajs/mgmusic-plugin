@@ -1,6 +1,6 @@
 // 云盘联动的离线自检（**不联网、不碰真的面板数据**）。
 //
-// 做法：把 `llrt/mgmusic.js` 的 `panel:host` 换成桩（内存 state + 假上游），
+// 做法：把 `src/mgmusic.js` 的 `panel:host` 换成桩（内存 state + 假上游），
 // 再把内部函数导出来，然后把「同步 / 禁用 / 幂等 / 读不到时降级」这五条口径逐条跑一遍。
 //
 // 为什么要这样一个东西：这个插件没有测试基建，而联动这一节的错法都很安静 ——
@@ -15,7 +15,7 @@ import { fileURLToPath } from 'node:url';
 import { tmpdir } from 'node:os';
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
-const SRC = join(ROOT, 'llrt', 'mgmusic.js');
+const SRC = join(ROOT, 'src', 'mgmusic.js');
 const TMP = join(tmpdir(), 'mgmusic-link-check');
 rmSync(TMP, { recursive: true, force: true });
 mkdirSync(join(TMP, 'plugin-data', 'mgmusic'), { recursive: true });
@@ -71,7 +71,7 @@ globalThis.__HOST__ = HOST;
 const src = readFileSync(SRC, 'utf8');
 const IMPORT = "import host from 'panel:host';";
 if (!src.includes(IMPORT)) {
-  console.error('❌ llrt/mgmusic.js 里找不到 ' + JSON.stringify(IMPORT) + ' —— 桩换不了，检查一下导入那句是不是改了');
+  console.error('❌ src/mgmusic.js 里找不到 ' + JSON.stringify(IMPORT) + ' —— 桩换不了，检查一下导入那句是不是改了');
   process.exit(1);
 }
 const EXPORTS = ['parseMcloudAccounts', 'syncFromMcloud', 'linkReport', 'setLinkDisabled', 'loadConfig', 'saveConfig', 'readMcloudAccounts'];

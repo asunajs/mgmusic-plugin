@@ -1,7 +1,7 @@
 {
   "extends": "./tsconfig.webui.base.json",
   "include": [
-    "llrt/webui/**/*.js",
+    "src/webui/**/*.js",
     "types/panel-ui.d.ts"
   ]
 }

@@ -3,7 +3,7 @@
 // 与 0.3.x 那版的关系：
 //   · 本仓根目录的 `mgmusic.js` / `index.html` / `app.js` / `style.css` / `boot.js`
 //     是 **QuickJS 老面板（0.3.x）** 的插件，仍在用（老面板停了也能手工装）。
-//   · `llrt/` 是 **0.4.x 变体**：宿主契约（`panel:host`）、存储（`state` 表）、
+//   · `src/` 是唯一实现（0.4.x 变体，旧面板那套已删）：宿主契约（`panel:host`）、存储（`state` 表）、
 //     WebUI（`/app.css` + `<p-*>` 套件）都不一样，差异不机械，所以单独维护一份源，
 //     不用构建期转换（mcloud 那边选的是 A，这里是 B —— 差异有 200 多处，转换脚本会更难维护）。
 //
@@ -16,7 +16,7 @@ import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
-const SRC = join(ROOT, 'llrt');
+const SRC = join(ROOT, 'src');
 const OUT = process.env.PANEL_LLRT_DIST ?? join(ROOT, 'dist', 'panel-llrt');
 const NAME = 'mgmusic';
 const pkg = JSON.parse(readFileSync(join(ROOT, 'package.json'), 'utf8'));
@@ -34,34 +34,34 @@ const must = [
 ];
 for (const [needle, why] of must) {
   if (!src.includes(needle)) {
-    console.error(`❌ llrt/mgmusic.js 缺少 ${JSON.stringify(needle)}（${why}）`);
+    console.error(`❌ src/mgmusic.js 缺少 ${JSON.stringify(needle)}（${why}）`);
     process.exit(1);
   }
 }
 // 0.3.x 的导入语句（注释里提到它没关系，只要没有真 import）
 if (/^import[^\n]*from ['"]host-api['"]/m.test(src)) {
-  console.error("❌ llrt/mgmusic.js 里还有 0.3.x 的 `from 'host-api'` 导入");
+  console.error("❌ src/mgmusic.js 里还有 0.3.x 的 `from 'host-api'` 导入");
   process.exit(1);
 }
 
-// 版本一致性：三处（package.json / llrt/mgmusic.js 的 VERSION / 清单）必须同值。
+// 版本一致性：三处（package.json / src/mgmusic.js 的 VERSION / 清单）必须同值。
 // 以前没钉，发版时漂成了 0.5.5 / 0.5.2 / 0.5.5 —— 面板「插件」列表读清单、
 // 界面右下角读 VERSION，两边不一样用户没法判断装的到底是哪版。
 const verInJs = (src.match(/^const VERSION = '([^']+)';$/m) || [])[1];
-const manifest = JSON.parse(readFileSync(join(SRC, 'mgmusic.panel.json'), 'utf8'));
+const manifest = JSON.parse(readFileSync(join(ROOT, 'mgmusic.panel.json'), 'utf8'));
 const verInManifest = String(manifest.version || '');
 if (verInJs !== pkg.version || verInManifest !== pkg.version) {
   console.error('❌ 版本不一致：package.json=' + pkg.version
-    + ' / llrt/mgmusic.js=' + String(verInJs)
-    + ' / llrt/mgmusic.panel.json=' + verInManifest);
+    + ' / src/mgmusic.js=' + String(verInJs)
+    + ' / mgmusic.panel.json=' + verInManifest);
   console.error('   三处要一起改（面板列表读清单，界面读 VERSION）');
   process.exit(1);
 }
 
 const banner = [
-  `// 由 cmusic-others/mgmusic-plugin/llrt/mgmusic.js 构建生成（panel-llrt 0.4.x 版）—— **不要手改这个文件**。`,
+  `// 由 cmusic-others/mgmusic-plugin/src/mgmusic.js 构建生成（panel-llrt 0.4.x 版）—— **不要手改这个文件**。`,
   '//',
-  '//   改代码：编辑插件项目的 llrt/，然后 `npm run deploy:panel`（构建 + 装进实例）',
+  '//   改代码：编辑插件项目的 src/，然后 `npm run deploy:panel`（构建 + 装进实例）',
   `//   mgmusic-plugin ${pkg.version} · 插件 \`${NAME}\``,
   '',
 ].join('\n');
@@ -87,8 +87,8 @@ if (!css.includes('--style-ver')) {
 }
 
 // 清单：面板读 plugins/<name>.panel.json 出配置表单、核对 min_panel。
-// 源在 llrt/（被 git 跟踪），构建时拷到 dist 顶层与 <name>.js 并列。
-const manifestSrc = join(SRC, `${NAME}.panel.json`);
+// 源在 src/（被 git 跟踪），构建时拷到 dist 顶层与 <name>.js 并列。
+const manifestSrc = join(ROOT, `${NAME}.panel.json`);
 const manifestDst = join(OUT, `${NAME}.panel.json`);
 cpSync(manifestSrc, manifestDst);
 console.log(`  ✅ ${manifestDst}`);
