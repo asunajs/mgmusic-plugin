@@ -65,12 +65,7 @@ function clampInt(v, min, max, fallback) {
   return Math.max(min, Math.min(max, n));
 }
 
-function mask(v, head, tail) {
-  const s = String(v || '');
-  if (!s) return '';
-  if (s.length <= head + tail) return s;
-  return s.slice(0, head) + '***' + s.slice(-tail);
-}
+// 掩码/提示/忙碌态统一走面板 PanelUI（第 246 轮收口）。
 
 /**
  * 顶部那个状态徽章。tone 用面板的徽章变体：idle / ok / warn / err / accent。
@@ -102,33 +97,10 @@ function showLines(lines) {
 
 /** 行内提示：空就是空（.hint 有 min-height，不会跳）；错误加 .hint-err。 */
 function setHint(id, kind, text) {
-  const el = $(id);
-  if (!el) return;
-  el.className = 'hint' + (kind === 'error' ? ' hint-err' : '');
-  el.textContent = text || '';
+  PanelUI.hint($(id), text, kind);   // 只负责「写到哪个元素」，上色/清空交给面板
 }
 
-/**
- * <p-button> 把文字包进了里面那个真 <button>（web/ui.js 的 PButton）。
- * 所以读/写按钮文字要落到内层，直接写宿主元素是看不见的。**改按钮文案必须走这两个。**
- */
-function btnText(btn) {
-  const b = btn && (btn._btn || btn);
-  return b ? b.textContent : '';
-}
-
-/** 改按钮文字：<p-button> 用公开的 .label（第 197 轮加的），普通 <button> 直接用 textContent。
- *  ⚠ 以前摸的是组件私有的 `btn._btn` —— 面板内部结构一变就断，不该这么写。 */
-function setBtnText(btn, text) {
-  if (!btn) return;
-  if (btn.tagName === 'P-BUTTON') btn.label = text;
-  else btn.textContent = text;
-}
-
-/** 禁用/启用：<p-button> 和 <button> 都认 .disabled = true。 */
-function setBtnOff(btn, off) {
-  if (btn) btn.disabled = !!off;
-}
+// 按钮文字/禁用不再自己管：`<p-button>` 的内层按钮交给 PanelUI.busy（第 246 轮收口）。
 
 // ──────────────────────────────────────────────────────────── 网络
 
@@ -270,8 +242,8 @@ function renderAccounts() {
     const meta = document.createElement('div');
     meta.className = 'acct-meta';
     meta.textContent = [
-      dev.msisdn ? '手机号 ' + mask(dev.msisdn, 3, 4) : '手机号未知',
-      dev.uid ? 'uid ' + mask(dev.uid, 6, 4) : 'uid 未解析',
+      dev.msisdn ? '手机号 ' + PanelUI.mask(dev.msisdn, 3, 4) : '手机号未知',
+      dev.uid ? 'uid ' + PanelUI.mask(dev.uid, 6, 4) : 'uid 未解析',
     ].join(' · ');
     main.appendChild(meta);
 
@@ -356,9 +328,7 @@ async function saveConfigObject(cfg) {
  * 老版的 withBusy 就是这个；这里多了一步 setRunBadge，让「在跑」看得见。
  */
 async function withBusy(btn, busyText, fn) {
-  const old = btnText(btn);
-  setBtnOff(btn, true);
-  setBtnText(btn, busyText);
+  PanelUI.busy(btn, true, busyText);   // 禁用 + 换字，恢复时还原原文案
   try {
     return await fn();
   } catch (e) {
@@ -367,8 +337,7 @@ async function withBusy(btn, busyText, fn) {
     setRunBadge('err', '有失败');
     return null;
   } finally {
-    setBtnOff(btn, false);
-    setBtnText(btn, old);
+    PanelUI.busy(btn, false);
   }
 }
 
@@ -437,9 +406,7 @@ async function doLogin() {
     return;
   }
   const btn = $('login');
-  const old = btnText(btn);
-  setBtnOff(btn, true);
-  setBtnText(btn, '登录中…');
+  PanelUI.busy(btn, true, '登录中…');
   setHint('login-hint', '', '正在校验验证码并解析 uid…');
   try {
     const data = await post('/login/verify', { msisdn: phone, code: code });
@@ -454,8 +421,7 @@ async function doLogin() {
     setHint('login-hint', 'error', e.message);
     if (e.lines) showLines(e.lines);
   } finally {
-    setBtnOff(btn, false);
-    setBtnText(btn, old);
+    PanelUI.busy(btn, false);
   }
 }
 
@@ -466,9 +432,7 @@ async function doCloudLogin() {
     return;
   }
   const btn = $('cloud-login');
-  const old = btnText(btn);
-  setBtnOff(btn, true);
-  setBtnText(btn, '换票中…');
+  PanelUI.busy(btn, true, '换票中…');
   setHint('login-hint', '', '正在用云盘 auth 换咪咕登录票据…');
   try {
     const data = await post('/cloud-auth', { auth: auth });
@@ -483,8 +447,7 @@ async function doCloudLogin() {
     setHint('login-hint', 'error', e.message);
     if (e.lines) showLines(e.lines);
   } finally {
-    setBtnOff(btn, false);
-    setBtnText(btn, old);
+    PanelUI.busy(btn, false);
   }
 }
 
@@ -642,7 +605,7 @@ async function saveAccount() {
   target.label = ($('account-label').value || '').trim();
   target.topup_min = clampInt($('account-topup').value, 0, 1440, 0);
   const btn = $('account-save');
-  setBtnOff(btn, true);
+  PanelUI.busy(btn, true, '保存中…');
   try {
     await saveConfigObject(cfg);
     closeAccountDialog();
@@ -650,7 +613,7 @@ async function saveAccount() {
   } catch (e) {
     setHint('account-hint', 'error', e.message);
   } finally {
-    setBtnOff(btn, false);
+    PanelUI.busy(btn, false);
   }
 }
 
@@ -695,7 +658,7 @@ async function saveSettings() {
   });
 
   const btn = $('save-settings');
-  setBtnOff(btn, true);
+  PanelUI.busy(btn, true, '保存中…');
   setHint('settings-hint', '', '保存中…');
   try {
     await saveConfigObject(cfg);
@@ -706,7 +669,7 @@ async function saveSettings() {
   } catch (e) {
     setHint('settings-hint', 'error', e.message);
   } finally {
-    setBtnOff(btn, false);
+    PanelUI.busy(btn, false);
   }
 }
 
@@ -733,10 +696,8 @@ async function doStatus(uid, btn) {
 async function doRun() {
   if (S.running) return;
   const btn = $('run');
-  const old = btnText(btn);
   S.running = true;
-  setBtnOff(btn, true);
-  setBtnText(btn, '排入执行…');
+  PanelUI.busy(btn, true, '排入执行…');
   setRunBadge('accent', '执行中…');
   setState('idle', '已排入');
   setHint('run-hint', '', 'daily 由面板的任务去跑，不会卡住这个页面；跑一次通常 1–2 分钟。');
@@ -752,7 +713,7 @@ async function doRun() {
       + '这一趟在面板的任务里跑：这里会跟着更新状态，逐条日志在面板的「运行记录」里。');
 
     const rec = await waitRun(t0, (ms) => {
-      setBtnText(btn, '跑着呢 ' + Math.round(ms / 1000) + 's');
+      PanelUI.busy(btn, true, '跑着呢 ' + Math.round(ms / 1000) + 's');
     });
 
     if (rec === null) {
@@ -785,8 +746,7 @@ async function doRun() {
       + '或者已经有一趟在跑，都会落到这里。也可以在面板的「任务」页手动运行 daily。）');
   } finally {
     S.running = false;
-    setBtnOff(btn, false);
-    setBtnText(btn, old);
+    PanelUI.busy(btn, false);
     // daily 会顺带同步 macOS App 账号，可能改了 devices —— 重读一次
     await loadAll();
   }
