@@ -295,15 +295,26 @@ node scripts/sync-macos-account.mjs
 - 这条路径在 LLRT 下即可跑（面板本身就是这个运行时）。
 - LLRT 内已验证 passport 公钥请求 + RSA 加密（1024-bit，输出 256 字符 hex，和网页 JS 的 RSAKey.encrypt 一致）；H5 查询用抓包 ce 变体验证过。
 
-## 差距：没有 CLI（2026-11-21 记录）
+## CLI（两件套的另一半）
 
-按 `panel-plugins/docs/STANDARD.md` 的「面板插件 + CLI 两件套」，本仓**目前只有面板插件**：
-配置读写在插件里（`plugin-data/mgmusic/config.json`），没有独立 CLI 入口。
+命令行只做**同一份配置**的诊断与查看 —— 读的就是面板表单 / 插件页写的那份
+`plugin-data/mgmusic/config.json`（R3：一份配置、一套行为）。
 
-- 现状：`npm run test:config` 只校验配置形状，不能当 CLI 用；
-- 补齐方式：把配置归并/校验逻辑（`config.json` 读写 + 形状检查）抽成 `src/standalone/`，
-  加 `bin: {"mgmusic": "..."}`，支持 `--help / --version / --config`；
-- 在补齐之前，**不要把本仓当「两件套」样板**。
+```bash
+node src/cli.mjs status            # 账号 / 联动开关 / 关键参数（默认命令）
+node src/cli.mjs check             # 校验配置形状；有问题退出码 1
+node src/cli.mjs paths             # 配置解析顺序与最终选中的文件
+node src/cli.mjs --help | --version
+npm run --silent cli -- status --json   # 机器可读（--silent 去掉 npm 自己的两行头，方便管道）
+# 更省事：直接 node src/cli.mjs status --json
+```
+
+配置来源（先命中先用）：
+`--config` → `$MGMUSIC_CONFIG_PATH` → `$PANEL_DATA_DIR/plugin-data/mgmusic/config.json`
+→ `~/panel-3030/...`（开发机示例，存在才用）→ `./data/config.json`（存在才用）。
+
+`bin` 名是 `mgmusic`（`npm i -g` / `npx` 可用）。门禁：`npm run check:cli` 跑 6 条冒烟
+（版本格式 / 帮助 / 好配置 / 状态脱敏 / paths 选中 / 坏配置退出码 1），已进 `npm run check`。
 
 ## 任务
 
