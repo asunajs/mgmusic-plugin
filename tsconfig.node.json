@@ -1,0 +1,4 @@
+{
+  "extends": "./tsconfig.node.base.json",
+  "include": ["llrt/mgmusic.js", "types/panel-host.d.ts", "types/node-llrt.d.ts"]
+}

@@ -508,6 +508,7 @@ function base64Text(s) {
     return out;
 }
 
+/** @param {bigint} base @param {bigint} exp @param {bigint} mod @returns {bigint} */
 function modPow(base, exp, mod) {
     let r = 1n;
     let b = base % mod;
@@ -997,7 +998,8 @@ function mcloudStoreFile() {
 
 /** 读不到 ≠ 没有账号。带 `code` 让调用方**降级**而不是当成空表。 */
 function mcloudUnavailable(reason) {
-    const e = new Error('读不到云盘账号：' + reason);
+    /** 带自定义 code，调用方据此降级 */
+    const e = /** @type {Error & {code?: string}} */ (new Error('读不到云盘账号：' + reason));
     e.code = 'MCLOUD_UNAVAILABLE';
     return e;
 }
@@ -2361,7 +2363,7 @@ async function runDevice(dev, cfg, label, started) {
         markFail();
         lines.push('[' + label + '] 身份校验失败: ' + (e && e.message ? e.message : e));
         lines.push('[' + label + '] 本轮不执行任何写操作');
-        lines.meta = meta;
+        /** @type {any} */ (lines).meta = meta;
         return lines;
     }
 
@@ -2415,7 +2417,7 @@ async function runDevice(dev, cfg, label, started) {
         }
         if (!inWindow(win)) {
             meta.skips += 1;
-            lines.push('[' + label + '] ' + name + ': 非窗口时段(' + win.join('-') + '),跳过');
+            lines.push('[' + label + '] ' + name + ': 非窗口时段(' + /** @type {any} */ (win).join('-') + '),跳过');
             continue;
         }
         if (overBudget(started)) {
@@ -2454,7 +2456,7 @@ async function runDevice(dev, cfg, label, started) {
     } catch (e) {
         markFail();
         lines.push('[' + label + '] 期末查询失败: ' + (e && e.message ? e.message : e));
-        lines.meta = meta;
+        /** @type {any} */ (lines).meta = meta;
         return lines;
     }
     meta.after = st2.bean;
@@ -2473,7 +2475,7 @@ async function runDevice(dev, cfg, label, started) {
         + ' 跳过=' + meta.skips
         + ' 失败=' + meta.errors);
     info(lines[lines.length - 1]);
-    lines.meta = meta;
+    /** @type {any} */ (lines).meta = meta;
     return lines;
 }
 
@@ -2526,7 +2528,7 @@ async function runDaily() {
         }
         try {
             const part = await runDevice(dev, cfg, label, started);
-            const meta = part.meta || {};
+            const meta = /** @type {any} */ (part).meta || {};
             for (let j = 0; j < part.length; j += 1) lines.push(part[j]);
             if (meta.failed) failedDevices += 1;
             claimed += Number(meta.claimed || 0);
@@ -2561,7 +2563,7 @@ async function runDaily() {
     // 每次跑的数字在「运行记录」和日志里，混进任务行会被当成日志。
 
     if (failedDevices > 0) {
-        const err = new Error(failedDevices + '/' + cfg.devices.length + ' 个账号失败');
+        const err = /** @type {Error & {lines?: string[]}} */ (new Error(failedDevices + '/' + cfg.devices.length + ' 个账号失败'));
         err.lines = lines;
         throw err;
     }

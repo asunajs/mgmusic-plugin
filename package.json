@@ -14,7 +14,8 @@
     "pack:panel04": "node scripts/pack-panelllrt.mjs",
     "test:config": "node scripts/test-config.mjs",
     "check:types": "node scripts/sync-types.mjs --check",
-    "typecheck": "node scripts/typecheck.mjs",
-    "test": "npm run check:llrt && npm run test:config"
+    "typecheck": "node scripts/typecheck.mjs && npm run typecheck:node",
+    "test": "npm run check:llrt && npm run test:config",
+    "typecheck:node": "node scripts/typecheck-node.mjs"
   }
 }
