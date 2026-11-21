@@ -43,7 +43,8 @@ const WEBUI_TIMEOUT_MS = 32000;
 /** 「立即跑一次」最多等多久（等不到就说「还没跑完」，绝不假装成功）。 */
 const RUN_WAIT_MAX_MS = 120000;
 
-const $ = (id) => document.getElementById(id);
+/** 取元素。@type {(id: string) => PanelEl} —— 面板控件把常用成员挂在自身上（types/panel-ui.d.ts）。 */
+const $ = (id) => /** @type {PanelEl} */ (document.getElementById(id));
 
 const S = {
   config: null,
@@ -117,6 +118,7 @@ function setHint(id, kind, text) {
 async function request(url, opts) {
   const options = opts || {};
   const method = options.method || 'GET';
+  /** @type {Record<string, string>} */
   const headers = {};
   // 面板的**写**接口要求 x-panel: 1（防跨站请求伪造）。⚠ 插件自己的 /plugins/<name>/api/*
   // **不校验**这个头（宿主把请求整段交给插件分发器，见 web.rs 的 plugin_webui_any），
@@ -163,8 +165,9 @@ async function request(url, opts) {
   }
   if (!res.ok) throw new Error(data.error || ('HTTP ' + res.status));
   if (data && data.ok === false) {
+    /** Error 上挂 `lines`（逐条结果，给 showLines 用）；@type {Error & {lines?: unknown}} */
     const err = new Error(data.error || '操作失败');
-    if (data.lines) err.lines = data.lines;
+    if (data.lines) /** @type {{lines?: unknown}} */ (err).lines = data.lines;
     throw err;
   }
   return data;
@@ -887,7 +890,7 @@ function diag() {
     }
     const runBtn = $('run');
     out.push('「立即跑一次」= ' + (runBtn ? runBtn.tagName.toLowerCase()
-      + (runBtn._btn ? '（内层 button.btn 已就绪）' : '（内层还没建：/ui.js 没加载？）') : '找不到'));
+      + (runBtn.label !== '' ? '（内层 button.btn 已就绪）' : '（内层还没建：/ui.js 没加载？）') : '找不到'));
     const cb = $('set-comment-enabled'); // 页面上剩下的那个勾选框（面板自绘）
     if (cb) {
       const cbs = getComputedStyle(cb);
