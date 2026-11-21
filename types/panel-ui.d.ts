@@ -25,6 +25,13 @@ interface PanelEl extends HTMLElement {
   startResend(seconds?: number): void;
   /** `<p-sms-code>`：关弹窗时停掉倒计时 */
   stopResend(): void;
+  /** `<select>` / `<p-select>`：选中项 */
+  selectedOptions: HTMLCollectionOf<HTMLOptionElement>;
+  /** `<button>` / `<input>`：type 属性 */
+  type: string;
+  /** `<input type="number">`：上下限（属性值，字符串） */
+  min: string;
+  max: string;
 }
 
 type PanelHintKind = 'error' | 'err' | 'warn' | 'warning' | '' | null;
@@ -38,8 +45,16 @@ declare const PanelUI: {
 
   /** 确认框：取消回 false。传字符串等价于 `{ text }`。 */
   confirm(options?: string | { text: string; title?: string; okLabel?: string; danger?: boolean }): Promise<boolean>;
-  /** 输入框：取消回 null（空串是有效答案）。 */
-  prompt(options: { title?: string; label?: string; value?: string }): Promise<string | null>;
+  /** 输入框：取消回 null（空串是有效答案）。与 confirm 共用 `text / okLabel / cancelLabel`。 */
+  prompt(options: {
+    title?: string;
+    label?: string;
+    value?: string;
+    placeholder?: string;
+    text?: string;
+    okLabel?: string;
+    cancelLabel?: string;
+  }): Promise<string | null>;
 
   /** 留头尾、中间打码；空串/短串原样返回。 */
   mask(value: unknown, head?: number, tail?: number): string;
