@@ -5,7 +5,7 @@
   "type": "module",
   "description": "咪咕音乐金币中心 JS 插件（QuickJS / Node）",
   "scripts": {
-    "check": "npm run check:types && npm run typecheck && npm run check:llrt && npm run test:config",
+    "check": "npm run check:types && npm run typecheck && npm test",
     "check:llrt": "node --check llrt/mgmusic.js && node --check llrt/webui/app.js",
     "check:link": "node scripts/check-link.mjs",
     "pack": "bash scripts/pack.sh",
@@ -14,6 +14,7 @@
     "pack:panel04": "node scripts/pack-panelllrt.mjs",
     "test:config": "node scripts/test-config.mjs",
     "check:types": "node scripts/sync-types.mjs --check",
-    "typecheck": "node scripts/typecheck.mjs"
+    "typecheck": "node scripts/typecheck.mjs",
+    "test": "npm run check:llrt && npm run test:config"
   }
 }
