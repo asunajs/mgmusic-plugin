@@ -291,6 +291,16 @@ node scripts/sync-macos-account.mjs
 - 这条路径在 QuickJS 下即可跑，不需要把面板切到 Node。
 - QuickJS 内已验证 passport 公钥请求 + RSA 加密（1024-bit，输出 256 字符 hex，和网页 JS 的 RSAKey.encrypt 一致）；H5 查询用抓包 ce 变体验证过。
 
+## 差距：没有 CLI（2026-11-21 记录）
+
+按 `panel-plugins/docs/STANDARD.md` 的「面板插件 + CLI 两件套」，本仓**目前只有面板插件**：
+配置读写在插件里（`plugin-data/mgmusic/config.json`），没有独立 CLI 入口。
+
+- 现状：`npm run test:config` 只校验配置形状，不能当 CLI 用；
+- 补齐方式：把配置归并/校验逻辑（`config.json` 读写 + 形状检查）抽成 `src/standalone/`，
+  加 `bin: {"mgmusic": "..."}`，支持 `--help / --version / --config`；
+- 在补齐之前，**不要把本仓当「两件套」样板**。
+
 ## 任务
 
 | 任务 | 调度 | 说明 |
