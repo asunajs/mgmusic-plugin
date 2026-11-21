@@ -73,7 +73,7 @@ import host from 'panel:host';
 import { chmodSync, mkdirSync, readFileSync, renameSync, statSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 
-const VERSION = '0.7.0';
+const VERSION = '0.8.0';
 const PLUGIN = 'mgmusic';
 const API = '/plugins/mgmusic/api'; // 老面板用它拼 register_route；0.4.x 由 evt.rel 分发，这里只作说明
 const RUN_BUDGET_MS = 100000; // 面板 cron 预算 120s，内部留 20s 收尾
