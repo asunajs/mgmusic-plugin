@@ -115,62 +115,42 @@ function setHint(id, kind, text) {
  *   ③ **插件自己的错误形状**：{ok:false, error, lines} 里的 lines 是给人看的逐条结果，
  *      挂到 error 上带给 showLines（老版就是这么用的）。
  */
+/**
+ * 调插件后端。传输层用面板的 `PanelUI.api`（超时 / JSON / 后端 error+ref 都在面板一处），
+ * 这里只补本页自己的语义：
+ *   · 502 = 插件正忙 / 这一趟超时 —— 单独给人话
+ *   · 2xx 但 `ok:false` = 业务失败，且要把 `lines`（逐条结果）挂到 error 上给 showLines
+ */
 async function request(url, opts) {
   const options = opts || {};
-  const method = options.method || 'GET';
-  /** @type {Record<string, string>} */
-  const headers = {};
-  // 面板的**写**接口要求 x-panel: 1（防跨站请求伪造）。⚠ 插件自己的 /plugins/<name>/api/*
-  // **不校验**这个头（宿主把请求整段交给插件分发器，见 web.rs 的 plugin_webui_any），
-  // 但这里照样发：同一份 request() 两处都用，且将来宿主收紧时不用回头改前端。
-  if (options.write) headers['x-panel'] = '1';
-  if (options.body !== undefined) headers['content-type'] = 'application/json';
-
   const timeout = options.timeout === undefined ? WEBUI_TIMEOUT_MS : options.timeout;
-  const ac = typeof AbortController === 'function' ? new AbortController() : null;
-  const timer = ac ? setTimeout(() => ac.abort(), timeout) : null;
-
-  let res;
   try {
-    res = await fetch(url, {
-      method: method,
-      headers: headers,
-      credentials: 'same-origin',
-      body: options.body === undefined ? undefined : JSON.stringify(options.body),
-      signal: ac ? ac.signal : undefined,
+    const data = await PanelUI.api(url, {
+      method: options.method,
+      body: options.body,
+      write: !!options.write,
+      timeoutMs: timeout,
     });
-  } catch (e) {
-    if (e && e.name === 'AbortError') {
-      throw new Error('等了 ' + Math.round(timeout / 1000) + ' 秒还没回来。'
-        + '面板给插件界面的请求上限是 30 秒，长动作请用「立即跑一次」（走面板任务）。');
+    if (data && data.ok === false) {
+      /** @type {Error & {lines?: unknown}} */
+      const err = new Error(data.error || '操作失败');
+      if (data.lines) err.lines = data.lines;
+      throw err;
     }
-    throw new Error('请求发不出去：' + (e && e.message ? e.message : String(e)));
-  } finally {
-    if (timer) clearTimeout(timer);
-  }
-
-  const text = await res.text();
-  let data = {};
-  try {
-    data = text ? JSON.parse(text) : {};
+    return data || {};
   } catch (e) {
-    // 默认文案不够用时，原文比「失败」两个字有用一百倍。
-    throw new Error('HTTP ' + res.status + '（响应不是 JSON）：' + text.slice(0, 200));
+    if (e && e.name === 'PanelApiError') {
+      if (e.status === 502) {
+        throw new Error('插件正忙（502）：有任务正在跑，或者这一趟超过 30 秒。'
+          + '等它跑完再点，或者用「立即跑一次」让面板去跑。');
+      }
+      if (e.status === 0) {
+        throw new Error(e.message + '（面板给插件界面的请求上限是 30 秒，长动作请用「立即跑一次」）');
+      }
+      throw new Error(e.message);
+    }
+    throw e;
   }
-
-  // 502 是面板说的「插件正忙 / 这一趟超时」，不是用户做错了什么 —— 单独说清。
-  if (res.status === 502) {
-    throw new Error('插件正忙（502）：有任务正在跑，或者这一趟超过 30 秒。'
-      + '等它跑完再点，或者用「立即跑一次」让面板去跑。');
-  }
-  if (!res.ok) throw new Error(data.error || ('HTTP ' + res.status));
-  if (data && data.ok === false) {
-    /** Error 上挂 `lines`（逐条结果，给 showLines 用）；@type {Error & {lines?: unknown}} */
-    const err = new Error(data.error || '操作失败');
-    if (data.lines) /** @type {{lines?: unknown}} */ (err).lines = data.lines;
-    throw err;
-  }
-  return data;
 }
 
 /** 调插件自己的接口（/plugins/mgmusic/api/*）。 */
