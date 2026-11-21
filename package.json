@@ -5,7 +5,7 @@
   "type": "module",
   "description": "咪咕音乐金币中心 JS 插件（QuickJS / Node）",
   "scripts": {
-    "check": "npm run check:types && npm run typecheck && npm test",
+    "check": "node scripts/check-phone-leak.mjs && npm run check:types && npm run typecheck && npm test",
     "check:link": "node scripts/check-link.mjs",
     "pack": "node scripts/pack-panelllrt.mjs",
     "build:panelllrt": "node scripts/build-panelllrt.mjs",
