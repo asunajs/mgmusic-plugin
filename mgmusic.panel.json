@@ -3,7 +3,7 @@
   "version": "0.8.0",
   "order": 20,
   "description": "咪咕音乐金币中心：每日签到、评论、听歌补报、领奖（这张表单与插件页面写同一份 config.json，账号列表在插件页面里改）",
-  "min_panel": "0.7.0",
+  "min_panel": "0.8.0",
   "capabilities": [
     "http",
     "sqlite",
