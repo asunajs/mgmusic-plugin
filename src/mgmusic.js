@@ -73,7 +73,7 @@ import host from 'panel:host';
 import { chmodSync, mkdirSync, readFileSync, renameSync, statSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 
-const VERSION = '0.8.0';
+const VERSION = '0.8.1';
 const PLUGIN = 'mgmusic';
 const API = '/plugins/mgmusic/api'; // 老面板用它拼 register_route；0.4.x 由 evt.rel 分发，这里只作说明
 const RUN_BUDGET_MS = 100000; // 面板 cron 预算 120s，内部留 20s 收尾
@@ -1093,6 +1093,69 @@ function isLinkDisabled(cfg, acc) {
     return false;
 }
 
+/** 一条云盘账号在联动名单里的键：**id 和手机号都算**（禁用时两个都写，启用时两个都删）。
+ *
+ *  为什么要成对：云盘那边有 `anon-xxxx` 这种 id（与手机号不同值）。只写 id，换个入口
+ *  按手机号禁用/启用就对不上；只写手机号，账号重新登录换了 auth 但 id 没变时又认不出。
+ *  两个都写、两个都认，才没有「明明禁了却还在同步」这种角落。 */
+function accountLinkKeys(acc) {
+    const out = [];
+    if (!acc) return out;
+    const id = String(acc.id || '').trim();
+    const phone = String(acc.phone || '').trim();
+    if (id) out.push(id);
+    if (phone && phone !== id) out.push(phone);
+    return out;
+}
+
+/** 一台咪咕设备在联动名单里的键：先 `mcloudId`，再手机号。 */
+function deviceLinkKeys(dev) {
+    const out = [];
+    if (!dev) return out;
+    const id = String(dev.mcloudId || '').trim();
+    const phone = String(dev.msisdn || '').trim();
+    if (id) out.push(id);
+    if (phone && phone !== id) out.push(phone);
+    return out;
+}
+
+/** 这台设备的云盘联动被禁用了没有。**只看配置**，不读云盘文件 —— 云盘读不到时也要答得出来。 */
+function isDeviceLinkDisabled(cfg, dev) {
+    const list = linkDisabledList(cfg);
+    const keys = deviceLinkKeys(dev);
+    for (let i = 0; i < keys.length; i += 1) {
+        if (list.indexOf(keys[i]) >= 0) return true;
+    }
+    return false;
+}
+
+/** 往联动名单里加键（去重、去空）。返回真正加进去的那几个。 */
+function addLinkKeys(cfg, keys) {
+    const list = linkDisabledList(cfg);
+    const added = [];
+    for (let i = 0; i < keys.length; i += 1) {
+        const k = String(keys[i] || '').trim();
+        if (!k || list.indexOf(k) >= 0) continue;
+        list.push(k);
+        added.push(k);
+    }
+    cfg.link_disabled = list;
+    return added;
+}
+
+/** 从联动名单里删键（去空）。返回真正删掉的那几个。 */
+function dropLinkKeys(cfg, keys) {
+    const list = linkDisabledList(cfg);
+    const removed = [];
+    const keep = [];
+    for (let i = 0; i < list.length; i += 1) {
+        if (keys.indexOf(list[i]) >= 0) removed.push(list[i]);
+        else keep.push(list[i]);
+    }
+    cfg.link_disabled = keep;
+    return removed;
+}
+
 /** 这条云盘账号在 devices 里的下标：**先按 mcloudId，再按手机号**。
  *
  *  ⚠ 手机号那一步是必须的：老账号（短信登录建的 / 手贴 auth 建的）没有 mcloudId，
@@ -1338,21 +1401,86 @@ function linkReport() {
     return out;
 }
 
-/** 禁用 / 启用某条云盘账号（只改 `link_disabled`，**不碰 devices**）。 */
+/** 禁用 / 启用某条云盘账号（只改 `link_disabled`，**不碰 devices**）。
+ *
+ *  `id` 可以是云盘账号 id，也可以是手机号（两个都认）。云盘读得到的时候按那条账号凑齐
+ *  全部键（云盘 id + 手机号 + 本机设备的 mcloudId/手机号）一起加、一起删 —— 少删一个键
+ *  就会「点了启用却还在跳过」。云盘读不到时只动给的那个键：不能因为云盘临时读不到就
+ *  拒绝「恢复联动」。
+ */
 function setLinkDisabled(id, disabled) {
     const key = String(id || '').trim();
     if (!key) throw new Error('要给云盘账号的 id');
     const cfg = loadConfig();
-    const list = linkDisabledList(cfg);
-    const at = list.indexOf(key);
-    if (disabled) {
-        if (at < 0) list.push(key);
-    } else if (at >= 0) {
-        list.splice(at, 1);
+    let keys = [key];
+    try {
+        const accounts = readMcloudAccounts();
+        for (let i = 0; i < accounts.length; i += 1) {
+            const one = accounts[i];
+            if (one.id !== key && !(one.phone && one.phone === key)) continue;
+            const dev = cfg.devices[findLinkIndex(cfg, one)];
+            keys = accountLinkKeys(one).concat(deviceLinkKeys(dev));
+            break;
+        }
+    } catch (e) {
+        /* 云盘读不到：只动给的那个键（user 口径：恢复联动不能因为云盘挂了就做不到） */
     }
-    cfg.link_disabled = list;
+    if (disabled) addLinkKeys(cfg, keys);
+    else dropLinkKeys(cfg, keys);
     saveConfig(cfg);
     return linkReport();
+}
+
+/** 删掉一台咪咕账号，**顺手把它从云盘联动里摘掉**（否则下次同步/每日任务又把它加回来）。
+ *
+ *  这就是「删了还会从云盘同步」那个坑的落点：删除只删本地面板里的凭证，云盘那条账号还
+ *  在，`link_disabled` 又没记它 ⇒ 下一次 `syncFromMcloud()` 按云盘新建一台，看起来像
+ *  「删不掉」。所以删除时默认 `disable_link: true`（只对联动来的号有意义）。
+ *
+ *  认账号：有 `index` 就用它（UI 传的就是它），`uid` 只当**校验** —— 列表被改过就报错让人
+ *  刷新；只给了 `uid` 才按 uid 找。宁可这次删失败，也不能删错号。
+ *  `opts.disable_link` 显式给 false 才「只删不禁用」（老账号、或者用户明知还会同步回来）。
+ */
+function removeDevice(opts) {
+    const options = opts || {};
+    const cfg = loadConfig();
+    const wantUid = String(options.uid || '').trim();
+    const wantIndex = Number(options.index);
+    const hasIndex = Number.isInteger(wantIndex) && wantIndex >= 0 && wantIndex < cfg.devices.length;
+    let at = -1;
+    if (hasIndex) {
+        // 有下标就用下标（UI 传的就是它），uid 只当**校验**：列表被人改过 ⇒ 报错让人刷新，
+        // 宁可这次删失败，也不能删错号。
+        at = wantIndex;
+        if (wantUid && String(cfg.devices[at].uid || '') !== wantUid) {
+            throw new Error('账号列表已经变了，刷新一下再删');
+        }
+    } else if (wantUid) {
+        for (let i = 0; i < cfg.devices.length; i += 1) {
+            if (String(cfg.devices[i].uid || '') === wantUid) { at = i; break; }
+        }
+        if (at < 0) throw new Error('找不到这个账号（可能已经删过了，刷新一下）');
+    } else {
+        throw new Error('要删哪个账号？给 uid 或 index');
+    }
+    const dev = cfg.devices[at];
+    const linked = String(dev.source || '') === 'mcloud-auth' || !!dev.mcloudId;
+    const disableLink = options.disable_link === undefined ? linked : !!options.disable_link;
+    const keys = deviceLinkKeys(dev);
+    const label = deviceLabel(dev, at);
+    cfg.devices.splice(at, 1);
+    // 先删账号再改名单：两步都在同一份 cfg 里，一次 saveConfig 落盘（不会出现「删了没禁」的中间态）
+    const added = disableLink ? addLinkKeys(cfg, keys) : [];
+    saveConfig(cfg);
+    return {
+        ok: true,
+        label: label,
+        linked: linked,
+        disable_link: disableLink,
+        link_keys: added,
+        devices: cfg.devices.length,
+        link_disabled: linkDisabledList(cfg),
+    };
 }
 function followLoginRedirect(redirectURL, token, cookie) {
     let raw = String(redirectURL || '').trim();
@@ -2956,6 +3084,12 @@ const WEB_ROUTES = {
     // 同步：把云盘账号变成咪咕账号（禁用的跳过）。幂等 —— 再点一次是 0 新建。
     'POST api/link/sync': function () {
         return json(200, syncFromMcloud());
+    },
+    // 删账号：`{uid | index, disable_link?}`。联动来的号默认**同时**从云盘联动里摘掉，
+    // 否则下一次同步（含每日任务里那次）会按云盘再建一台 —— 用户看到的就是「删不掉」。
+    'POST api/remove': function (req) {
+        const body = parseBody(req);
+        return json(200, removeDevice(body));
     },
     'GET api/status': function () {
         return json(200, statusAll());

@@ -1,7 +1,8 @@
 // 云盘联动的离线自检（**不联网、不碰真的面板数据**）。
 //
 // 做法：把 `src/mgmusic.js` 的 `panel:host` 换成桩（内存 state + 假上游），
-// 再把内部函数导出来，然后把「同步 / 禁用 / 幂等 / 读不到时降级」这五条口径逐条跑一遍。
+// 再把内部函数导出来，然后把「同步 / 禁用 / 幂等 / 删除后不被同步复活 / 读不到时降级」
+// 这几条口径逐条跑一遍。
 //
 // 为什么要这样一个东西：这个插件没有测试基建，而联动这一节的错法都很安静 ——
 // 「同一个号变成两条」「禁用等于偷偷删账号」「读不到就当没账号」都不会报错，
@@ -49,7 +50,10 @@ const HOST = {
   http_fetch: (url, opts) => {
     fetches.push(url);
     if (url.includes('querySpecTokenV2')) {
-      const raw = Buffer.from(String(opts.headers.authorization).replace(/^Basics+/i, ''), 'base64').toString('utf8');
+      // ⚠ 这里原来写的是 /^Basics+/i —— 只能匹配到 "Basics"，"Basic " 原样留下来，
+      //   base64 解出来是乱码、phone 变 undefined，于是所有夹具号的 uid 都成了 "Uundefined"。
+      //   以前没有断言依赖 uid 所以没暴露；删账号按 uid 认号之后就必须是真号了。
+      const raw = Buffer.from(String(opts.headers.authorization).replace(/^Basic\s+/i, ''), 'base64').toString('utf8');
       const phone = raw.split(':')[1];
       return { status: 200, headers: {}, body: JSON.stringify({ success: true, code: '0000', data: { token: 'TKT-' + phone } }) };
     }
@@ -74,7 +78,8 @@ if (!src.includes(IMPORT)) {
   console.error('❌ src/mgmusic.js 里找不到 ' + JSON.stringify(IMPORT) + ' —— 桩换不了，检查一下导入那句是不是改了');
   process.exit(1);
 }
-const EXPORTS = ['parseMcloudAccounts', 'syncFromMcloud', 'linkReport', 'setLinkDisabled', 'loadConfig', 'saveConfig', 'readMcloudAccounts'];
+const EXPORTS = ['parseMcloudAccounts', 'syncFromMcloud', 'linkReport', 'setLinkDisabled',
+  'removeDevice', 'isDeviceLinkDisabled', 'loadConfig', 'saveConfig', 'readMcloudAccounts'];
 const LF = String.fromCharCode(10);
 const pluginSrc = src.replace(IMPORT, 'const host = globalThis.__HOST__;')
   + LF + 'export { ' + EXPORTS.join(', ') + ' };' + LF;
@@ -138,7 +143,34 @@ m.setLinkDisabled('13600136002', false);
 const r5 = m.syncFromMcloud();
 ok('恢复后重新跟随（不重复建）', [r5.counts.added, devices().length], [0, 2]);
 
-console.log('⑥ 云盘表读不到：降级，一个账号都不动');
+console.log('⑥ 删除联动账号：默认同时禁用联动（否则下次同步/每日任务会把它加回来）');
+const victim = devices()[1]; // 「移动」：云盘 id 是 anon-aohk08、手机号是 13600136002（两个键不一样）
+const rm = m.removeDevice({ uid: victim.uid, index: 1 });
+ok('删掉 1 台', devices().length, 1);
+ok('返回说清了「联动号 + 已禁用」', [rm.linked, rm.disable_link], [true, true]);
+ok('名单里 id 与手机号都在',
+  m.loadConfig().link_disabled.slice().sort(), ['13600136002', 'anon-aohk08'].sort());
+fetches = [];
+const r7 = m.syncFromMcloud();
+ok('再同步：没有复活', devices().length, 1);
+ok('跳过 1 条、新建 0', [r7.counts.skipped, r7.counts.added], [1, 0]);
+ok('一次上游请求都没发（禁用的不问云盘要票）', fetches.length, 0);
+
+console.log('⑦ 恢复联动后能重新同步回来；uid 与 index 对不上时拒绝删');
+m.setLinkDisabled('13600136002', false);
+ok('名单清空（id 与手机号一起删）', m.loadConfig().link_disabled, []);
+const r8 = m.syncFromMcloud();
+ok('恢复后重新建回来', [r8.counts.added, devices().length], [1, 2]);
+let mismatch = false;
+try {
+  m.removeDevice({ uid: devices()[0].uid, index: 1 });
+} catch (e) {
+  mismatch = true;
+}
+ok('uid/index 对不上 ⇒ 报错，不删错号', mismatch, true);
+ok('账号没少', devices().length, 2);
+
+console.log('⑧ 云盘表读不到：降级，一个账号都不动');
 const keep = JSON.stringify(devices());
 rmSync(sharedFile);
 const r6 = m.syncFromMcloud();
@@ -150,5 +182,5 @@ if (bad) {
   console.error(LF + '❌ 云盘联动自检：' + bad + ' 条不过');
   process.exit(1);
 }
-console.log(LF + '✅ 云盘联动自检全过（同步 / 幂等 / 禁用 / 降级）');
+console.log(LF + '✅ 云盘联动自检全过（同步 / 幂等 / 禁用 / 删除不复活 / 降级）');
 

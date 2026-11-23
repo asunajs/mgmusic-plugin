@@ -29,7 +29,7 @@
          <p-dialog>）：控件外观和面板同源，改面板就等于改这里。
          两个 defer 的先后就是执行顺序：套件先注册元素，app.js 再用它们。 -->
     <script src="/ui.js" defer></script>
-    <script src="app.js?v=2" defer></script>
+    <script src="app.js?v=3" defer></script>
   </head>
   <body>
     <!--
@@ -64,6 +64,9 @@
           <h2 class="card-title">账号</h2>
           <span id="account-summary" class="chip">正在读取账号…</span>
           <div class="head-actions">
+            <!-- 「云盘联动」是管理入口：云盘那几个号谁跟着同步、谁禁用，都在那张清单里改。
+                 以前这份清单藏在「添加账号」弹窗里，用户删完账号找不到禁用开关（2026-11-23）。 -->
+            <p-button id="link-manage">云盘联动</p-button>
             <p-button id="link-sync">从云盘同步</p-button>
             <p-button variant="primary" id="add-account">添加账号</p-button>
           </div>
@@ -75,6 +78,9 @@
             id="account-empty"
             text="还没有账号。点「添加账号」，用手机号和短信验证码登录一次即可。"
           ></p-empty>
+          <!-- 账号相关的回话（删除结果、联动提醒）写在这里，别塞到下面「设置」卡里 —— -->
+          <!-- 用户刚点的是账号那行的按钮，回答却出现在另一张卡里，看起来像没反应。 -->
+          <p class="hint" id="accounts-hint"></p>
         </div>
       </section>
 
@@ -236,12 +242,12 @@
         </p-field>
         <p class="hint" id="login-hint"></p>
 
-        <!-- 云盘联动：账号直接从云盘插件那拿（那边维护续期，这边不用贴 auth） -->
-        <p class="hint" id="link-hint">
-          移动云盘那边已经登录的账号，可以直接同步过来，不用短信。
+        <!-- 云盘联动那块**不在这里了**：清单挪到独立的「云盘联动」弹窗（首页账号那一行的按钮）。
+             这个弹窗只留「手动兜底」，否则用户为了禁用一个号得先点「添加账号」—— 找不到。 -->
+        <p class="hint">
+          移动云盘那边已经登录的账号可以直接同步过来，不用短信；不想让某个号跟过来，
+          去首页的「云盘联动」里点「禁用」。
         </p>
-        <ul id="link-list" class="acct link-list"></ul>
-        <p-empty id="link-empty" text="正在读云盘账号…"></p-empty>
 
         <details class="advanced">
           <summary>手动兜底：粘贴云盘 Authorization</summary>
@@ -268,6 +274,28 @@
       </div>
     </p-dialog>
 
+    <!-- ══════════════ 云盘联动 ══════════════ -->
+    <!-- 移动云盘里的账号 × 「跟不跟着同步」。禁用 = 跳过这个号（不建、不更新、不重换票），
+         已经同步过来的咪咕账号照旧跑 —— 禁用不是删除。
+         这里也是「删了又被同步回来」的解药：删除联动账号时会自动把它加进这份名单。 -->
+    <p-dialog id="link-dialog" title="移动云盘联动">
+      <div class="dialog-body">
+        <p class="hint" id="link-hint">
+          移动云盘那边已经登录的账号，可以直接同步过来，不用短信。
+        </p>
+        <ul id="link-list" class="acct link-list"></ul>
+        <p-empty id="link-empty" text="正在读云盘账号…"></p-empty>
+        <p class="hint">
+          「禁用」只让这个号不再从云盘同步；已经同步过来的咪咕账号还在，照旧签到/补报。
+          想彻底不要它，回首页把那个咪咕账号「删除」即可（删除时会自动禁用联动）。
+        </p>
+      </div>
+      <div class="dialog-actions">
+        <p-button id="link-close" variant="ghost">关闭</p-button>
+        <p-button id="link-sync-dialog">同步全部</p-button>
+      </div>
+    </p-dialog>
+
     <!-- ══════════════ 单账号设置 ══════════════ -->
     <p-dialog id="account-dialog" title="账号设置">
       <div class="dialog-body">
@@ -283,6 +311,11 @@
           step="1"
           hint="留空或 0 = 不做听歌补报"
         ></p-number>
+        <!-- 只对「云盘授权」来的账号显示：关掉 = 加进联动禁用名单（等价于清单里的「禁用」） -->
+        <p-field id="account-link-row" label="移动云盘联动" hidden>
+          <p-switch id="account-follow" label="跟着云盘同步凭据"></p-switch>
+          <p class="hint" id="account-link-hint"></p>
+        </p-field>
         <p class="hint" id="account-hint"></p>
       </div>
       <div class="dialog-actions">

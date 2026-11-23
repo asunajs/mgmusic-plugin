@@ -31,6 +31,9 @@ const must = [
   // 云盘联动（2026-11-17）：少了这些说明拷的是没有联动的旧版
   ['function readMcloudAccounts(', '云盘账号表只读'],
   ["'POST api/link/sync'", '云盘同步路由'],
+  // 0.8.1：删账号时顺手禁用联动（否则同步会把它加回来）
+  ['function removeDevice(', '删账号 + 禁用联动'],
+  ["'POST api/remove'", '删账号路由'],
 ];
 for (const [needle, why] of must) {
   if (!src.includes(needle)) {

@@ -28,7 +28,7 @@
 
 // 页面版本号：和 style.css 里的 --style-ver 一起人工递增。
 // ?diag=1 的自检块读它 —— 用来分辨「CSS 是新的、JS 还是旧的」这种半新半旧状态。
-document.documentElement.dataset.appVer = '2';
+document.documentElement.dataset.appVer = '3';
 
 /** 插件自己的接口（和老面板一字不差）。 */
 const API = '/plugins/mgmusic/api';
@@ -183,6 +183,33 @@ function sourceLabel(dev) {
   return '短信登录';
 }
 
+/** 这台账号是不是「跟着云盘走」的（联动建的 / 手贴云盘 auth 建的）。 */
+function isLinked(dev) {
+  return String((dev && dev.source) || '') === 'mcloud-auth' || !!(dev && dev.mcloudId);
+}
+
+/** 这台账号在联动名单里的键：mcloudId + 手机号（后端 `deviceLinkKeys` 的同一口径）。 */
+function devLinkKeys(dev) {
+  const out = [];
+  const id = String((dev && dev.mcloudId) || '').trim();
+  const phone = String((dev && dev.msisdn) || '').trim();
+  if (id) out.push(id);
+  if (phone && phone !== id) out.push(phone);
+  return out;
+}
+
+/** 联动名单（config.link_disabled）。**只看配置**：云盘读不到也要答得出来。 */
+function linkDisabledKeys() {
+  const raw = S.config && S.config.link_disabled;
+  return Array.isArray(raw) ? raw.map((x) => String(x || '').trim()).filter(Boolean) : [];
+}
+
+/** 这台账号的云盘联动被禁用了没有。 */
+function isDevLinkDisabled(dev) {
+  const list = linkDisabledKeys();
+  return devLinkKeys(dev).some((k) => list.indexOf(k) >= 0);
+}
+
 /** 一个 <p-button>，size="sm"。自定义元素建出来就已经被 /ui.js 注册过了，直接 append。 */
 function smallButton(text, variant, onClick) {
   const b = document.createElement('p-button');
@@ -220,6 +247,13 @@ function renderAccounts() {
     source.textContent = sourceLabel(dev);
     title.appendChild(name);
     title.appendChild(source);
+    // 联动被禁用时得看得见：否则用户以为它还在跟云盘续期，或者以为禁用没生效
+    if (isLinked(dev) && isDevLinkDisabled(dev)) {
+      const off = document.createElement('span');
+      off.className = 'badge warn';
+      off.textContent = '已停用联动';
+      title.appendChild(off);
+    }
     main.appendChild(title);
 
     const meta = document.createElement('div');
@@ -235,7 +269,11 @@ function renderAccounts() {
     const topup = Number(dev.topup_min === undefined ? cfg.topup_min : dev.topup_min) || 0;
     sub.textContent = '听歌补报 ' + topup + ' 分钟'
       + (dev.cookie ? ' · 已保存会话 cookie' : ' · 暂无会话 cookie')
-      + (String(dev.source || '') === 'mcloud-auth' ? ' · 凭据跟着移动云盘走' : '');
+      + (isLinked(dev)
+        ? (isDevLinkDisabled(dev)
+          ? ' · 已停止跟随云盘（凭据不再自动换）'
+          : ' · 凭据跟着移动云盘走')
+        : '');
     main.appendChild(sub);
 
     const actions = document.createElement('div');
@@ -283,6 +321,7 @@ function renderAll() {
 async function loadAll() {
   setState('idle', '读取中…');
   setHint('settings-hint', '', '');
+  setHint('accounts-hint', '', '');
   try {
     const data = await call('/config');
     S.config = data.config || {};
@@ -344,7 +383,6 @@ function openLoginDialog() {
   $('login-dialog').setAttribute('open', '');
   const input = sms.querySelector('input');
   if (input) input.focus();
-  void renderLinkList();
 }
 
 function closeLoginDialog() {
@@ -502,7 +540,7 @@ async function renderLinkList() {
     const actions = document.createElement('div');
     actions.className = 'acct-actions';
     if (!acc.linked && !acc.disabled) {
-      const sync = smallButton('同步', '', () => doLinkSync());
+      const sync = smallButton('同步', '', (e) => doLinkSync(e.currentTarget));
       actions.appendChild(sync);
     }
     const toggle = smallButton(acc.disabled ? '启用' : '禁用', acc.disabled ? '' : 'danger',
@@ -514,16 +552,18 @@ async function renderLinkList() {
   });
 }
 
-/** 一键把云盘账号同步成咪咕账号（禁用的会被跳过；幂等）。 */
-async function doLinkSync() {
-  const btn = $('link-sync');
-  return withBusy(btn, '同步中…', async () => {
+/** 一键把云盘账号同步成咪咕账号（禁用的会被跳过；幂等）。
+ *  btn 由调用方给：首页那个「从云盘同步」和弹窗里的「同步全部」是两个按钮，
+ *  忙碌态要落在被点的那个上（不然用户点了弹窗里的，首页那个在转圈）。 */
+async function doLinkSync(btn) {
+  const target = btn || $('link-sync');
+  return withBusy(target, '同步中…', async () => {
     const data = await call('/link/sync', { method: 'POST', write: true, body: {} });
     showLines(data.lines || []);
     await loadAll();
     void renderLinkList();
     if (data.available === false) {
-      setHint('login-hint', 'error', data.reason || '读不到云盘账号');
+      setHint('link-hint', 'error', data.reason || '读不到云盘账号');
       setState('warn', '云盘读不到');
       return data;
     }
@@ -537,20 +577,26 @@ async function doLinkSync() {
 /** 禁用 / 启用某一条云盘账号（只改联动名单，**不删**咪咕里已有的账号）。 */
 async function doLinkToggle(id, disabled) {
   try {
-    const data = await call('/link', { method: 'POST', write: true, body: { id: id, disabled: disabled } });
+    await call('/link', { method: 'POST', write: true, body: { id: id, disabled: disabled } });
     await loadAll();
-    if (data && data.accounts) {
-      // 复用上一次的清单数据，省一次 GET
-      const list = $('link-list');
-      if (list) list.textContent = '';
-    }
     await renderLinkList();
-    setHint('login-hint', '', disabled
+    setHint('link-hint', '', disabled
       ? '已禁用联动：这个号不会再从云盘同步（已同步的账号保持原样照旧跑）'
       : '已恢复联动：下次同步会重新跟随云盘');
   } catch (e) {
-    setHint('login-hint', 'error', e.message);
+    setHint('link-hint', 'error', e.message);
   }
+}
+
+/** 打开「云盘联动」清单（首页账号那一行的按钮）。 */
+function openLinkDialog() {
+  $('link-dialog').setAttribute('open', '');
+  setHint('link-hint', '', '正在读云盘账号…');
+  void renderLinkList();
+}
+
+function closeLinkDialog() {
+  $('link-dialog').removeAttribute('open');
 }
 // ──────────────────────────────────────────────────────────── 单账号设置
 
@@ -566,6 +612,18 @@ function openAccountDialog(index) {
   $('account-topup').value = dev.topup_min === undefined
     ? ((S.config && S.config.topup_min) || 0)
     : dev.topup_min;
+  // 云盘联动开关：只对联动来的号显示（短信登录的号没有「跟不跟云盘」这回事）
+  const linked = isLinked(dev);
+  const disabled = linked && isDevLinkDisabled(dev);
+  $('account-link-row').hidden = !linked;
+  // ⚠ <p-switch> 的 value 是布尔（setter 里 `!!v`），但类型契约写的是 string —
+  //   传 'on' / '' 两边都成立，别传 true/false（tsc --checkJs 会红）。
+  $('account-follow').value = (linked && !disabled) ? 'on' : '';
+  setHint('account-link-hint', disabled ? 'warn' : '', linked
+    ? (disabled
+      ? '现在已停止跟随：这个号不会再从云盘同步，凭据也不再自动换。'
+      : '关掉 = 这个号不再从云盘同步；账号不会被删，签到/补报照旧。')
+    : '');
   setHint('account-hint', '', '');
   dlg.setAttribute('open', '');
   $('account-label').focus();
@@ -587,12 +645,27 @@ async function saveAccount() {
   const target = cfg.devices[S.editing];
   target.label = ($('account-label').value || '').trim();
   target.topup_min = clampInt($('account-topup').value, 0, 1440, 0);
+  // 联动开关：只对联动来的号有意义。关掉 = 把它加进 link_disabled（等价于清单里的「禁用」），
+  // 打开 = 从名单里删掉它所有的键（mcloudId + 手机号，漏一个就还会跳过）。
+  const linked = isLinked(dev);
+  const follow = !!$('account-follow').value;
+  if (linked) {
+    const keys = devLinkKeys(dev);
+    const list = Array.isArray(cfg.link_disabled) ? cfg.link_disabled.slice() : [];
+    if (follow) {
+      cfg.link_disabled = list.filter((k) => keys.indexOf(String(k || '').trim()) < 0);
+    } else {
+      keys.forEach((k) => { if (k && list.indexOf(k) < 0) list.push(k); });
+      cfg.link_disabled = list;
+    }
+  }
   const btn = $('account-save');
   PanelUI.busy(btn, true, '保存中…');
   try {
     await saveConfigObject(cfg);
     closeAccountDialog();
-    setHint('settings-hint', '', '账号设置已保存');
+    setHint('settings-hint', '', '账号设置已保存'
+      + (linked && !follow ? '；这个号已停止跟随云盘' : ''));
   } catch (e) {
     setHint('account-hint', 'error', e.message);
   } finally {
@@ -604,21 +677,31 @@ async function removeAccount(index) {
   const dev = devices()[index];
   if (!dev) return;
   const name = deviceLabel(dev, index);
+  const linked = isLinked(dev);
   // 确认走面板的弹窗（PanelUI.confirm，/ui.js 提供），不用浏览器原生 confirm：
   // 原生框是另一个窗口、和面板长得完全不一样，iframe 里还可能被拦。
+  //
+  // ⚠ 联动来的号必须说清「会同时禁止联动」：只删本地凭证的话，云盘那条账号还在，
+  //   下一次同步（每日任务里也会同步一次）就会把它原样加回来 —— 用户看到的是「删不掉」。
   const ok = await PanelUI.confirm({
-    text: '删除账号「' + name + '」？只删除本面板里的凭证，不会注销咪咕账号。',
+    text: linked
+      ? '删除账号「' + name + '」？它来自移动云盘：删除时会同时禁止它再从云盘同步，'
+        + '否则下次同步（每日任务也会同步）会把它加回来。只删本面板里的凭证，'
+        + '咪咕账号不会注销，云盘那边的账号也不动。'
+      : '删除账号「' + name + '」？只删除本面板里的凭证，不会注销咪咕账号。',
     okLabel: '删除',
     danger: true,
   });
   if (!ok) return;
-  const cfg = clone(S.config);
-  cfg.devices.splice(index, 1);
   try {
-    await saveConfigObject(cfg);
-    setHint('settings-hint', '', '账号已删除');
+    // 删 + 禁用联动在后端一次做完（同一份 cfg、一次落盘），不在这里 splice 再写整份配置
+    const data = await post('/remove', { uid: String(dev.uid || ''), index: index });
+    await loadAll();
+    setHint('accounts-hint', '', data.disable_link && data.linked
+      ? '账号已删除，并已禁止它再从云盘同步（想恢复：首页「云盘联动」→ 启用）'
+      : '账号已删除');
   } catch (e) {
-    setHint('settings-hint', 'error', e.message);
+    setHint('accounts-hint', 'error', e.message);
   }
 }
 
@@ -891,7 +974,11 @@ function diag() {
 
 $('refresh').addEventListener('click', loadAll);
 $('add-account').addEventListener('click', openLoginDialog);
-$('link-sync').addEventListener('click', doLinkSync);
+$('link-manage').addEventListener('click', openLinkDialog);
+$('link-close').addEventListener('click', closeLinkDialog);
+// 两个同步按钮：各自转自己的圈，别串（首页那个和弹窗里那个）
+$('link-sync').addEventListener('click', (e) => doLinkSync(e.currentTarget));
+$('link-sync-dialog').addEventListener('click', (e) => doLinkSync(e.currentTarget));
 $('login-cancel').addEventListener('click', closeLoginDialog);
 $('account-cancel').addEventListener('click', closeAccountDialog);
 $('account-save').addEventListener('click', saveAccount);

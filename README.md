@@ -38,6 +38,16 @@ uid / deviceid / ce 由短信登录或 App 同步自动维护，不需要用户�
 - **禁用某条**：`link_disabled`（云盘账号 id **或**手机号，两个都认）。语义只有一条 ——
   **跳过该账号从云盘联动**：不新建、不更新、不重换票；**已经存在的咪咕账号原样保留照旧跑**
   （禁用不是删除）。取消禁用后下次同步恢复跟随。
+  **入口（0.8.1 起）**：首页「账号」那行的「云盘联动」按钮 → 那张清单里逐条「禁用 / 启用」；
+  单个账号也可以点「设置」→「移动云盘联动」开关关掉。命令行等价物：`mgmusic link`（看清单）、
+  `mgmusic link off <id|手机号>` / `link on <id|手机号>`。
+  （0.8.0 及以前这份清单藏在「添加账号」弹窗里，删完账号根本找不着 —— 用户的反馈就是那条。）
+- **删除联动账号 = 删除 + 禁用联动（0.8.1）**：联动来的号删掉时，插件会把它在云盘侧的 id
+  和手机号一起写进 `link_disabled`。为什么必须这样：删除只删本地面板里的凭证，云盘那条账号
+  还在，`link_disabled` 又没记它 ⇒ 下一次同步（**每日任务里也会同步一次**）按云盘新建一台，
+  用户看到的就是「删了怎么又回来了 / 删不掉」。删除接口是 `POST /plugins/mgmusic/api/remove`
+  （`{uid|index, disable_link}`），不要再在前端 splice 后整份写配置 —— 那会跳过这一步。
+  想恢复：首页「云盘联动」→ 启用，或 `mgmusic link on <id|手机号>`；下次同步会重新建回来。
 - **失效自救**：联动账号身份校验不过时，用云盘**当前**凭据重换一次票并重试一次。
   不做预防性换票 —— 换票会造新会话，而抓包文档写明票据重放/会话叠加**未测**。
 - **读不到怎么办**：云盘插件没装/文件读不出来 ⇒ 界面说清原因，短信账号照旧可用，
@@ -45,7 +55,8 @@ uid / deviceid / ce 由短信登录或 App 同步自动维护，不需要用户�
 - 手贴 `Authorization` 那条路**保留**，降级到弹窗里的「手动兜底」折叠区 ——
   云盘插件没装时才需要。
 
-离线自检（不联网）：`npm run check:link` —— 跑同步 / 幂等 / 禁用 / 降级四条口径。
+离线自检（不联网）：`npm run check:link` —— 跑同步 / 幂等 / 禁用 / **删除后不被同步复活** /
+降级五条口径。
 
 ### 移动云盘 auth 登录（0.5.1，0.6.0 起降级为手动兜底）
 
@@ -304,6 +315,9 @@ node scripts/sync-macos-account.mjs
 node src/cli.mjs status            # 账号 / 联动开关 / 关键参数（默认命令）
 node src/cli.mjs check             # 校验配置形状；有问题退出码 1
 node src/cli.mjs paths             # 配置解析顺序与最终选中的文件
+node src/cli.mjs link              # 云盘联动清单（每个云盘账号跟不跟着同步）
+node src/cli.mjs link off <key>    # 禁用某个云盘账号的联动（key = 云盘 id 或手机号）
+node src/cli.mjs link on  <key>    # 恢复联动
 node src/cli.mjs --help | --version
 npm run --silent cli -- status --json   # 机器可读（--silent 去掉 npm 自己的两行头，方便管道）
 # 更省事：直接 node src/cli.mjs status --json
@@ -313,8 +327,13 @@ npm run --silent cli -- status --json   # 机器可读（--silent 去掉 npm 自
 `--config` → `$MGMUSIC_CONFIG_PATH` → `$PANEL_DATA_DIR/plugin-data/mgmusic/config.json`
 → `~/panel-3030/...`（开发机示例，存在才用）→ `./data/config.json`（存在才用）。
 
-`bin` 名是 `mgmusic`（`npm i -g` / `npx` 可用）。门禁：`npm run check:cli` 跑 6 条冒烟
-（版本格式 / 帮助 / 好配置 / 状态脱敏 / paths 选中 / 坏配置退出码 1），已进 `npm run check`。
+`bin` 名是 `mgmusic`（`npm i -g` / `npx` 可用）。门禁：`npm run check:cli` 跑 11 条冒烟
+（版本格式 / 帮助 / 好配置 / 状态脱敏 / paths 选中 / link off 记 id+手机号 / link on 不留残键 /
+link 幂等 / link --json / 坏配置退出码 1），已进 `npm run check`。
+
+⚠ `link off|on` 是 CLI 里**唯一会写配置**的命令：走「读整份 → 改 `link_disabled` → 校验形状 →
+备份 `.bak-cli-<时间戳>` → 同目录 tmp（0600）→ rename」。插件每次动作前都重读文件，所以写完
+立刻生效。它和面板同时写同一份文件的窗口极小（都是一次 rename），但别在面板正保存时并行跑。
 
 ## 任务
 

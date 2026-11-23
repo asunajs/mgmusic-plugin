@@ -7,6 +7,9 @@
 ///   node src/cli.mjs status [--json]      # 账号 / 联动开关 / 关键参数
 ///   node src/cli.mjs check  [--json]      # 配置形状校验（坏配置非零退出）
 ///   node src/cli.mjs paths                # 配置解析顺序与最终选中的路径
+///   node src/cli.mjs link                 # 云盘联动清单（谁被禁用）
+///   node src/cli.mjs link off <id|手机号>  # 禁用某个云盘账号的联动（= 面板里的「禁用」）
+///   node src/cli.mjs link on  <id|手机号>  # 恢复联动（= 面板里的「启用」）
 ///   node src/cli.mjs --help | --version
 ///
 /// 配置来源（先命中先用）：
@@ -14,7 +17,7 @@
 ///   ③ $PANEL_DATA_DIR/plugin-data/mgmusic/config.json
 ///   ④ ~/panel-3030/data/plugin-data/mgmusic/config.json（开发机示例，存在才用）
 ///   ⑤ ./data/config.json（独立跑，存在才用）
-import { existsSync, readFileSync, statSync } from 'node:fs';
+import { chmodSync, existsSync, readFileSync, renameSync, statSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -32,6 +35,9 @@ const HELP = `咪咕音乐插件 CLI（与面板插件共用同一份 config.jso
   status          账号 / 云盘联动开关 / 关键参数（默认命令）
   check           校验配置形状；有问题退出码 1
   paths           打印配置解析顺序与最终选中的文件
+  link            云盘联动清单（每个云盘账号跟不跟着同步）
+  link off <key>  禁用某个云盘账号的联动：key 是云盘账号 id 或手机号
+  link on  <key>  恢复联动（与面板里的「禁用 / 启用」是同一份 link_disabled）
 
 选项：
   --config <path> 指定配置文件（等价 $MGMUSIC_CONFIG_PATH）
@@ -53,6 +59,10 @@ let cmd = 'status';
 let wantJson = false;
 let configFlag = '';
 let dataDirFlag = '';
+/** 命令后的位置参数（`link off <key>` 里的 `off` 和那个 key）。 */
+const cmdArgs = [];
+/** 第一个位置参数是命令；后面的都进 cmdArgs。选项的值由上面的 ++i 吃掉，不会走到这里。 */
+let sawCommand = false;
 
 for (let i = 0; i < argv.length; i += 1) {
   const a = argv[i];
@@ -62,10 +72,15 @@ for (let i = 0; i < argv.length; i += 1) {
   if (a === '--config') { configFlag = argv[++i] || die('--config 后面要跟路径'); continue; }
   if (a === '--data-dir') { dataDirFlag = argv[++i] || die('--data-dir 后面要跟目录'); continue; }
   if (a.startsWith('-')) die('不认识的选项：' + a);
-  cmd = a;
+  if (!sawCommand) {
+    cmd = a;
+    sawCommand = true;
+  } else {
+    cmdArgs.push(a);
+  }
 }
 
-if (!['status', 'check', 'paths'].includes(cmd)) die('不认识的命令：' + cmd + '（见 --help）');
+if (!['status', 'check', 'paths', 'link'].includes(cmd)) die('不认识的命令：' + cmd + '（见 --help）');
 
 /** 配置候选（顺序即优先级；只有显式给的才允许不存在）。 */
 function candidates() {
@@ -182,6 +197,157 @@ try {
 const { errors, warnings, devices } = inspect(cfg);
 const size = statSync(picked.path).size;
 
+// ──────────────────────────────────────────────────────────── link：云盘联动名单
+//
+// 与面板页的「云盘联动」是**同一个动作、同一份字段**（R3）：`link off <key>` = 清单里点
+// 「禁用」，`link on <key>` = 点「启用」。写的是同一份 config.json（原子写 + 0600 +
+// `.bak-cli-<时间戳>` 备份）；插件侧 loadConfig() 每次都重读文件，所以写完立刻生效。
+//
+// 为什么 CLI 也要有：用户删了账号却被每日任务同步回来时，人在终端上就能先止血，
+// 不用先开面板找那个按钮。
+
+/** 一个云盘账号可能被记在哪几个键上：给的那个 + 本机设备上与它对应的 mcloudId/手机号。 */
+function linkKeysFor(config, key) {
+  const out = [key];
+  const push = (v) => {
+    const s = String(v || '').trim();
+    if (s && out.indexOf(s) < 0) out.push(s);
+  };
+  const devs = Array.isArray(config.devices) ? config.devices : [];
+  devs.forEach((d) => {
+    if (!d || typeof d !== 'object') return;
+    const id = String(d.mcloudId || '').trim();
+    const phone = String(d.msisdn || '').trim();
+    if ((id && id === key) || (phone && phone === key)) {
+      push(id);
+      push(phone);
+    }
+  });
+  return out;
+}
+
+/** 云盘账号表（只读，不解析 auth —— 这里只要能列出 id/备注/停用态）。 */
+function readMcloudLite(configPath) {
+  const file = join(dirname(dirname(configPath)), 'mcloud', 'shared.json');
+  const miss = (reason) => ({ ok: false, file, reason, accounts: [] });
+  if (!existsSync(file)) return miss('云盘账号表不在（云盘插件没装？）');
+  try {
+    const doc = JSON.parse(readFileSync(file, 'utf8'));
+    const raw = doc && doc['mcloud.accounts'];
+    if (raw === undefined || raw === null || String(raw).trim() === '') return { ok: true, file, reason: '', accounts: [] };
+    const list = JSON.parse(String(raw));
+    if (!Array.isArray(list)) return miss('账号表不是数组');
+    const accounts = list
+      .filter((it) => it && typeof it === 'object' && String(it.id || '').trim())
+      .map((it) => ({
+        id: String(it.id).trim(),
+        label: String(it.label || '').trim(),
+        disabled: it.disabled === true,
+      }));
+    return { ok: true, file, reason: '', accounts };
+  } catch (e) {
+    return miss('读不出来：' + (e && e.message ? e.message : e));
+  }
+}
+
+if (cmd === 'link') {
+  const sub = String(cmdArgs[0] || 'list');
+  const key = String(cmdArgs[1] || '').trim();
+  const list = Array.isArray(cfg.link_disabled)
+    ? cfg.link_disabled.map((x) => String(x || '').trim()).filter(Boolean)
+    : [];
+  const cloud = readMcloudLite(picked.path);
+  const devs = Array.isArray(cfg.devices) ? cfg.devices : [];
+
+  if (sub === 'list' || sub === 'ls' || sub === '') {
+    if (wantJson) {
+      console.log(JSON.stringify({
+        ok: true,
+        path: picked.path,
+        cloud_file: cloud.file,
+        cloud_available: cloud.ok,
+        cloud_reason: cloud.reason,
+        link_disabled: list,
+        cloud_accounts: cloud.accounts,
+        devices: devs.map((d, i) => ({
+          index: i + 1,
+          label: String(d.label || ''),
+          msisdn: mask(d.msisdn),
+          mcloud_id: d.mcloudId ? mask(String(d.mcloudId), 4, 4) : '',
+          linked: !!(d.mcloudId),
+          link_disabled: isDevDisabled(d, list),
+        })),
+      }, null, 2));
+      process.exit(0);
+    }
+    console.log('云盘账号表：' + cloud.file + (cloud.ok ? '' : '（' + cloud.reason + '）'));
+    if (cloud.ok) {
+      if (!cloud.accounts.length) console.log('  （云盘里还没有账号）');
+      cloud.accounts.forEach((a, i) => {
+        const off = list.indexOf(a.id) >= 0;
+        console.log('  ' + (i + 1) + '. ' + (a.label || '(无备注)') + '  id ' + mask(a.id, 4, 4)
+          + (a.disabled ? '  [云盘已停用]' : '')
+          + (off ? '  [联动已禁用]' : ''));
+      });
+    }
+    console.log('本机账号：' + devs.length + ' 个');
+    devs.forEach((d, i) => {
+      const linked = !!d.mcloudId;
+      console.log('  ' + (i + 1) + '. ' + (String(d.label || '') || '(无备注)') + '  ' + (mask(d.msisdn) || '(无号)')
+        + (linked ? '  [云盘联动]' : '')
+        + (linked && isDevDisabled(d, list) ? '  [已停用联动]' : ''));
+    });
+    console.log('联动禁用名单：' + (list.length ? list.map((k) => mask(k, 3, 4)).join(', ') : '（空）'));
+    process.exit(0);
+  }
+
+  if (sub !== 'off' && sub !== 'on') die('link 只认 list / off <id|手机号> / on <id|手机号>');
+  if (!key) die('要给云盘账号 id 或手机号：' + NAME + ' link ' + sub + ' <id|手机号>');
+  const keys = linkKeysFor(cfg, key);
+  const next = sub === 'off'
+    ? keys.reduce((acc, k) => (acc.indexOf(k) >= 0 ? acc : acc.concat([k])), list.slice())
+    : list.filter((k) => keys.indexOf(k) < 0);
+  if (next.length === list.length && next.every((k, i) => k === list[i])) {
+    if (wantJson) console.log(JSON.stringify({ ok: true, changed: false, link_disabled: list }, null, 2));
+    else console.log('没变化：' + (sub === 'off' ? '本来就禁用着' : '本来就没禁用'));
+    process.exit(0);
+  }
+  const nextCfg = Object.assign({}, cfg, { link_disabled: next });
+  // 写之前再校一遍形状：宁可这次不写，也别把一份坏配置落盘（面板和 daily 都读它）
+  const after = inspect(nextCfg);
+  if (after.errors.length) {
+    console.error('❌ 改完的配置校验不过，没写：' + after.errors.join('；'));
+    process.exit(1);
+  }
+  const rawText = readFileSync(picked.path, 'utf8');
+  const bak = picked.path + '.bak-cli-' + Date.now();
+  try {
+    writeFileSync(bak, rawText, { mode: 0o600 });
+    try { chmodSync(bak, 0o600); } catch (e) { /* 已是 0600 */ }
+  } catch (e) {
+    die('备份失败，没写：' + (e && e.message ? e.message : e), 1);
+  }
+  // 原子写：同目录 tmp（0600）→ rename。写到一半被打断会留下半截 JSON，插件读它就会坏。
+  const tmp = picked.path + '.tmp-cli';
+  writeFileSync(tmp, JSON.stringify(nextCfg, null, 2) + '\n', { mode: 0o600 });
+  try { chmodSync(tmp, 0o600); } catch (e) { /* 已是 0600 */ }
+  renameSync(tmp, picked.path);
+  if (wantJson) {
+    console.log(JSON.stringify({ ok: true, changed: true, action: sub, keys, link_disabled: next, backup: bak }, null, 2));
+  } else {
+    console.log((sub === 'off' ? '已禁用联动：' : '已恢复联动：') + keys.map((k) => mask(k, 3, 4)).join(', '));
+    console.log('备份：' + bak);
+    console.log('下次同步' + (sub === 'off' ? '会跳过这个号（已同步的账号照旧跑）' : '会重新跟随云盘'));
+  }
+  process.exit(0);
+}
+
+/** 这台设备的联动是不是被禁用了（CLI 版；与插件 isDeviceLinkDisabled 同口径）。 */
+function isDevDisabled(dev, list) {
+  const keys = [String(dev.mcloudId || '').trim(), String(dev.msisdn || '').trim()].filter(Boolean);
+  return keys.some((k) => list.indexOf(k) >= 0);
+}
+
 if (cmd === 'check') {
   if (wantJson) {
     console.log(JSON.stringify({ ok: errors.length === 0, path: picked.path, errors, warnings }, null, 2));
@@ -201,7 +367,7 @@ const rows = devices.map((d, i) => ({
   msisdn: mask(d.msisdn),
   uid: d.uid ? mask(d.uid, 4, 4) : '',
   disabled: !!d.disabled,
-  linked: !!d.mcloud_id,
+  linked: !!(d.mcloudId || d.mcloud_id),
 }));
 const summary = {
   ok: errors.length === 0,

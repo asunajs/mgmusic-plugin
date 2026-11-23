@@ -3,7 +3,7 @@
 // 为什么要有：CLI 是「两件套」的另一半，它坏了用户会以为是插件坏了；而它不在界面上，
 // 没人会每天点一遍。所以塞进门禁。
 import { execFileSync } from 'node:child_process';
-import { mkdtempSync, writeFileSync, rmSync } from 'node:fs';
+import { mkdtempSync, readFileSync, writeFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -21,7 +21,8 @@ const check = (name, ok, detail = '') => {
 
 const version = run(['--version']).trim();
 check('--version 输出 x.y.z', /^\d+\.\d+\.\d+$/.test(version), version);
-check('--help 列出三个命令', /status/.test(run(['--help'])) && /check/.test(run(['--help'])));
+const help = run(['--help']);
+check('--help 列出命令', /status/.test(help) && /check/.test(help) && /link/.test(help));
 
 const dir = mkdtempSync(join(tmpdir(), 'mgmusic-cli-'));
 try {
@@ -46,6 +47,29 @@ try {
   const paths = JSON.parse(run(['paths', '--config', good, '--json']));
   check('paths --json：选中 --config 那份', paths.selected === good, paths.selected);
 
+  // 云盘联动：off 按 mcloudId **和**手机号一起记（漏一个就还会同步回来），on 两个一起删
+  const linkCfg = join(dir, 'link.json');
+  writeFileSync(linkCfg, JSON.stringify({
+    schema_version: 1,
+    devices: [{
+      label: '云盘号', msisdn: '13800138000', uid: '9aea4c39-49e0-4000-8000-000000000001',
+      mcloudId: 'anon-test01', source: 'mcloud-auth',
+    }],
+    link_disabled: [],
+  }));
+  const off = JSON.parse(run(['link', 'off', '13800138000', '--config', linkCfg, '--json']));
+  const afterOff = JSON.parse(readFileSync(linkCfg, 'utf8')).link_disabled;
+  check('link off：changed=true', off.changed === true, JSON.stringify(off));
+  check('link off：手机号与 mcloudId 都进名单',
+    afterOff.includes('13800138000') && afterOff.includes('anon-test01'), JSON.stringify(afterOff));
+  const on = JSON.parse(run(['link', 'on', '13800138000', '--config', linkCfg, '--json']));
+  const afterOn = JSON.parse(readFileSync(linkCfg, 'utf8')).link_disabled;
+  check('link on：名单清空（不留残键）', on.changed === true && afterOn.length === 0, JSON.stringify(afterOn));
+  const noop = JSON.parse(run(['link', 'on', '13800138000', '--config', linkCfg, '--json']));
+  check('link on：再点一次是没变化（幂等）', noop.changed === false, JSON.stringify(noop));
+  const listed = JSON.parse(run(['link', '--config', linkCfg, '--json']));
+  check('link --json：列出云盘账号与本机账号', listed.cloud_accounts.length === 0 && listed.devices.length === 1, JSON.stringify(listed.devices));
+
   // 坏配置：非零退出 + 报出具体错
   const bad = join(dir, 'bad.json');
   writeFileSync(bad, JSON.stringify({ devices: 'nope', timeout_ms: 5 }));
@@ -62,5 +86,5 @@ try {
 
 const bad = results.filter((x) => !x).length;
 console.log('');
-console.log(bad === 0 ? `ok: 6 条 CLI 冒烟全过` : `失败 ${bad} / ${results.length}`);
+console.log(bad === 0 ? `ok: ${results.length} 条 CLI 冒烟全过` : `失败 ${bad} / ${results.length}`);
 process.exit(bad === 0 ? 0 : 1);
