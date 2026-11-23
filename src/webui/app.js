@@ -28,7 +28,7 @@
 
 // 页面版本号：和 style.css 里的 --style-ver 一起人工递增。
 // ?diag=1 的自检块读它 —— 用来分辨「CSS 是新的、JS 还是旧的」这种半新半旧状态。
-document.documentElement.dataset.appVer = '3';
+document.documentElement.dataset.appVer = '4';
 
 /** 插件自己的接口（和老面板一字不差）。 */
 const API = '/plugins/mgmusic/api';
@@ -664,7 +664,8 @@ async function saveAccount() {
   try {
     await saveConfigObject(cfg);
     closeAccountDialog();
-    setHint('settings-hint', '', '账号设置已保存'
+    // 回话写在账号区（用户点的是账号卡上的「设置」），别落到下面「设置」卡里
+    setHint('accounts-hint', '', '账号设置已保存'
       + (linked && !follow ? '；这个号已停止跟随云盘' : ''));
   } catch (e) {
     setHint('account-hint', 'error', e.message);
@@ -970,6 +971,34 @@ function diag() {
   setInterval(collect, 2000);
 }
 
+// ──────────────────────────────────────────────────────────── <p-switch> 的点击兜底
+//
+// 面板 0.8.x 的 <p-switch> 鼠标点不动（2026-11-23 实测，不是插件的锅）：
+//   · 它建的是 <div class="switch">，里面一个 <input class="switch-input"> + 一个 knob；
+//   · .switch-input 被 /app.css 定成 `opacity:0; width:0; height:0`，所以点不到；
+//   · <div> 不是 <label>，点 knob / 文字也没有「激活勾选」这回事；
+//   · 只有 Tab 聚焦到那个 0×0 input 再按空格能改。
+//   面板自己的 scripts/ui-kit-check.mjs 是**直接 `.switch-input`.click()**，所以门禁一直绿。
+//
+// 这里只补「点一下切换」这一件事：不换控件、不碰样式。判据用**结构**而不是版本号 ——
+// 等面板把外层改成 <label>（或自己补 click），`wrap.tagName === 'LABEL'` 就跳过了，
+// 这层兜底自动失效。加了 preventDefault 是为了将来面板真修好时不会「两处各切一次」。
+const switchShimSeen = new WeakSet();
+
+function makeSwitchClickable(el) {
+  if (!el || switchShimSeen.has(el)) return;
+  const wrap = el.firstElementChild;
+  if (!wrap || wrap.tagName === 'LABEL') return; // 面板已经修好了，不需要兜底
+  switchShimSeen.add(el);
+  el.addEventListener('click', (e) => {
+    if (el.hasAttribute('disabled')) return;
+    e.preventDefault();
+    // ⚠ setter 是 `!!v`（getter 回布尔），所以传 'on' / '' 才是两边都成立的值
+    el.value = el.value ? '' : 'on';
+    el.dispatchEvent(new CustomEvent('change', { detail: { value: !!el.value }, bubbles: true }));
+  });
+}
+
 // ──────────────────────────────────────────────────────────── 事件接线
 
 $('refresh').addEventListener('click', loadAll);
@@ -981,6 +1010,7 @@ $('link-sync').addEventListener('click', (e) => doLinkSync(e.currentTarget));
 $('link-sync-dialog').addEventListener('click', (e) => doLinkSync(e.currentTarget));
 $('login-cancel').addEventListener('click', closeLoginDialog);
 $('account-cancel').addEventListener('click', closeAccountDialog);
+makeSwitchClickable($('account-follow'));
 $('account-save').addEventListener('click', saveAccount);
 $('login-phone-code').addEventListener('send', sendCode);
 $('login').addEventListener('click', doLogin);
