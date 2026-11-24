@@ -54,6 +54,8 @@
         <div class="top-right">
           <!-- 状态用面板的徽章（.badge + 变体），不自己画一个 chip —— 全站的「状态」长一样 -->
           <span id="state" class="badge idle">未连接</span>
+          <!-- 版本由面板给（它读的就是插件清单），插件不自己再存一份 -->
+          <p-plugin-ver></p-plugin-ver>
           <p-button id="refresh">刷新</p-button>
         </div>
       </header>
